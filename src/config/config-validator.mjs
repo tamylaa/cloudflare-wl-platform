@@ -36,6 +36,7 @@ import {
   TOOLTIP_TONE_VALUES,
   WEBHOOK_EVENT_NAME_MODE_VALUES,
 } from './communications.mjs';
+import { enforceBrandingSecurityPolicy } from './branding-security-policy.mjs';
 
 // ─── Field-Level Validators ─────────────────────────────────────────────────
 
@@ -330,30 +331,13 @@ export function validateConfig(config) {
     });
   }
 
-  if (config.branding?.customJs) {
-    if (config.branding.allowUnsafeCustomJs !== true) {
-      warnings.push({
-        field: 'branding.customJs',
-        message: 'Custom JS is disabled by default and should only be enabled for trusted, owner-reviewed deployments.',
-      });
-    }
-
-    if (String(config.branding.customJs).length > 8000) {
-      warnings.push({
-        field: 'branding.customJs',
-        message: 'Large inline custom JS increases review and rollback risk; prefer a hosted, versioned asset when possible.',
-      });
-    }
-  }
-
-  for (const field of ['logoUrl', 'faviconUrl', 'ogImageUrl', 'fontUrl']) {
-    const value = config.branding?.[field];
-    if (typeof value === 'string' && /^data:/i.test(value.trim()) && value.length > 12000) {
-      warnings.push({
-        field: `branding.${field}`,
-        message: `${field} contains a large inline data URI. Prefer a hosted asset or object storage reference to keep config payloads small.`,
-      });
-    }
+  const brandingPolicy = enforceBrandingSecurityPolicy(config.branding || {}, { mode: 'config' });
+  for (const finding of [...brandingPolicy.errors, ...brandingPolicy.warnings]) {
+    const fieldPath = finding.field ? `branding.${finding.field}` : 'branding';
+    warnings.push({
+      field: fieldPath,
+      message: finding.message,
+    });
   }
 
   if (config.authIdentity?.roleDefinitions !== undefined) {
