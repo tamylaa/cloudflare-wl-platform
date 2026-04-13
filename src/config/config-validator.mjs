@@ -442,6 +442,53 @@ export function validateConfig(config) {
         message: 'SAML mode should specify a tenant entity ID / audience value.',
       });
     }
+    if (!config.authIdentity?.samlCertificateSecret) {
+      warnings.push({
+        field: 'authIdentity.samlCertificateSecret',
+        message: 'SAML mode should reference a Wrangler secret name for the IdP signing certificate.',
+      });
+    }
+  }
+
+  if (config.authIdentity?.ssoMode === 'oidc' && !config.authIdentity?.oidcClientSecretSecret) {
+    warnings.push({
+      field: 'authIdentity.oidcClientSecretSecret',
+      message: 'OIDC mode should specify the Wrangler secret name that holds the client secret.',
+    });
+  }
+
+  // White-label login hostname: must not expose a known vendor-platform hostname
+  if (config.authIdentity?.loginHostname) {
+    const lh = String(config.authIdentity.loginHostname).toLowerCase().trim();
+    const vendorPatterns = [
+      /\.workers\.dev$/,
+      /\.pages\.dev$/,
+      /\.cloudflareaccess\.com$/,
+      /\.auth0\.com$/,
+      /\.okta\.com$/,
+      /\.microsoft\.com$/,
+      /\.google\.com$/,
+    ];
+    const exposesVendor = vendorPatterns.some((re) => re.test(lh));
+    if (exposesVendor) {
+      warnings.push({
+        field: 'authIdentity.loginHostname',
+        message: `loginHostname '${lh}' exposes a vendor-platform domain. Set a fully white-labeled custom hostname (e.g. login.yourbrand.com).`,
+      });
+    }
+    // Cookie domain should be aligned with the login hostname
+    const cd = String(config.authIdentity?.sessionCookieDomain || '').toLowerCase().trim();
+    if (!cd) {
+      warnings.push({
+        field: 'authIdentity.sessionCookieDomain',
+        message: 'sessionCookieDomain should be set to match loginHostname so session cookies are scoped to the custom domain.',
+      });
+    } else if (cd !== lh && !lh.endsWith(`.${cd}`) && !cd.endsWith(`.${lh}`)) {
+      warnings.push({
+        field: 'authIdentity.sessionCookieDomain',
+        message: `sessionCookieDomain '${cd}' and loginHostname '${lh}' look misaligned. The cookie domain should be a parent or match of the login hostname.`,
+      });
+    }
   }
 
   if (
