@@ -10,6 +10,7 @@
  */
 
 import { resolveDomainControl } from '../tenancy/domain-control.mjs';
+import { enforceBrandingSecurityPolicy } from '../config/branding-security-policy.mjs';
 
 function sanitizeEmbeddedText(value = '') {
     return String(value || '').replace(/<\/(style|script)/gi, '<\\/$1');
@@ -154,6 +155,8 @@ export function resolveBrand(env = {}, tenant = null, runtimeBranding = null) {
         customJs: mergedBranding.customJs || PLATFORM_DEFAULTS.customJs,
         allowUnsafeCustomJs:
             mergedBranding.allowUnsafeCustomJs === true || env.ALLOW_TENANT_CUSTOM_JS === '1',
+        customJsCspPolicy:
+            mergedBranding.customJsCspPolicy || PLATFORM_DEFAULTS.customJsCspPolicy,
 
         // URLs
         siteUrl: publicSiteUrl,
@@ -214,6 +217,14 @@ export function brandCSSOverrides(brand) {
         return '';
     }
 
+    const cssPolicy = enforceBrandingSecurityPolicy(
+        { customCss: brand.customCss },
+        { mode: 'config' }
+    );
+    const hasCustomCssPolicyIssue = [...cssPolicy.errors, ...cssPolicy.warnings].some(
+        (finding) => finding.field === 'customCss'
+    );
+
     const hasOverrides =
         brand.primaryColor !== PLATFORM_DEFAULTS.primaryColor ||
         brand.secondaryColor !== PLATFORM_DEFAULTS.secondaryColor ||
@@ -224,7 +235,7 @@ export function brandCSSOverrides(brand) {
         brand.errorColor !== PLATFORM_DEFAULTS.errorColor ||
         brand.warningColor !== PLATFORM_DEFAULTS.warningColor ||
         brand.fontFamily !== PLATFORM_DEFAULTS.fontFamily ||
-        Boolean(brand.fontCssImport || brand.fontUrl || brand.customCss);
+        Boolean(brand.fontCssImport || brand.fontUrl || (!hasCustomCssPolicyIssue && brand.customCss));
 
     if (!hasOverrides) {
         return '';
@@ -241,7 +252,7 @@ export function brandCSSOverrides(brand) {
         fontFace = `@font-face { font-family: "${sanitizeEmbeddedText(fontName || 'TenantBrandFont')}"; src: url("${sanitizeEmbeddedText(brand.fontUrl)}"); font-display: swap; }`;
     }
 
-    const customCss = sanitizeEmbeddedText(brand.customCss || '');
+    const customCss = hasCustomCssPolicyIssue ? '' : sanitizeEmbeddedText(brand.customCss || '');
 
     return `${fontImport}
 ${fontFace}
@@ -303,6 +314,18 @@ export function brandScriptOverrides(brand = PLATFORM_DEFAULTS) {
     if (brand?.allowUnsafeCustomJs !== true) {
         return '';
     }
+
+    const jsPolicy = enforceBrandingSecurityPolicy(
+        {
+            customJs: brand?.customJs || '',
+            allowUnsafeCustomJs: brand?.allowUnsafeCustomJs === true,
+        },
+        { mode: 'save' }
+    );
+    if (jsPolicy.errors.some((finding) => finding.field === 'customJs')) {
+        return '';
+    }
+
     return sanitizeEmbeddedText(brand?.customJs || '').trim();
 }
 
