@@ -37,6 +37,7 @@ import {
   WEBHOOK_EVENT_NAME_MODE_VALUES,
 } from './communications.mjs';
 import { enforceBrandingSecurityPolicy } from './branding-security-policy.mjs';
+import { DATA_RESIDENCY_REGION_VALUES } from './mobile.mjs';
 
 // ─── Field-Level Validators ─────────────────────────────────────────────────
 
@@ -52,6 +53,9 @@ const VALID_EMAIL_AUTH_STATUSES = ['unconfigured', 'pending_dns', 'verifying', '
 const VALID_TENANT_HIERARCHY_ROLES = ['standalone', 'master', 'subtenant'];
 const VALID_DATA_ISOLATION_MODES = ['strict', 'master_controlled', 'shared_aggregates'];
 const VALID_CROSS_TENANT_LEARNING_MODES = ['disabled', 'anonymized_aggregates', 'explicit_opt_in'];
+const VALID_OPERATIONS_ENVIRONMENTS = ['production', 'sandbox'];
+const VALID_AUDIT_LOG_SIEM_FORMATS = ['jsonl', 'cef'];
+const VALID_DATA_RESIDENCY_REGIONS = DATA_RESIDENCY_REGION_VALUES;
 const VALID_AUTH_SSO_MODES = AUTH_SSO_MODE_VALUES;
 const VALID_MFA_ENFORCEMENT_MODES = MFA_ENFORCEMENT_MODE_VALUES;
 const VALID_SESSION_COOKIE_SAME_SITE = AUTH_SESSION_SAME_SITE_VALUES;
@@ -231,6 +235,20 @@ export function validateConfig(config) {
     });
   }
 
+  if (!config.tenantIsolation?.organizationId) {
+    warnings.push({
+      field: 'tenantIsolation.organizationId',
+      message: 'organizationId should be set to preserve tenant-to-organization ownership boundaries.',
+    });
+  }
+
+  if (config.tenantIsolation?.dataIsolationMode !== 'strict') {
+    warnings.push({
+      field: 'tenantIsolation.dataIsolationMode',
+      message: 'Non-strict data isolation modes increase cross-tenant blast radius and should be approved explicitly.',
+    });
+  }
+
   if (
     config.tenantIsolation?.crossTenantLearningMode &&
     config.tenantIsolation.crossTenantLearningMode !== 'disabled' &&
@@ -239,6 +257,53 @@ export function validateConfig(config) {
     warnings.push({
       field: 'tenantIsolation.requireExplicitConsent',
       message: 'Cross-tenant learning should normally require explicit consent from each participating tenant.',
+    });
+  }
+
+  const quotaConfig = config.quotas || {};
+  const rateLimitFields = [
+    'apiRequestsPerMinute',
+    'oauthRequestsPerMinute',
+    'billingRequestsPerMinute',
+    'triggerRequestsPerMinute',
+    'auditRequestsPerHour',
+  ];
+  const hasExplicitRateLimit = rateLimitFields.some(
+    (field) => Number(quotaConfig?.[field] || 0) > 0
+  );
+  if (!hasExplicitRateLimit) {
+    warnings.push({
+      field: 'quotas',
+      message: 'No per-tenant rate limits are configured; noisy-neighbour mitigation may rely only on global defaults.',
+    });
+  }
+
+  if (config.operations?.environment === 'production') {
+    if (!config.domainRouting?.appHostname) {
+      warnings.push({
+        field: 'domainRouting.appHostname',
+        message: 'Production tenants should set domainRouting.appHostname for self-service domain routing.',
+      });
+    }
+    if (!config.branding?.productName) {
+      warnings.push({
+        field: 'branding.productName',
+        message: 'Production tenants should set a branded productName during provisioning.',
+      });
+    }
+  }
+
+  if (!Array.isArray(config.authIdentity?.roleDefinitions) || config.authIdentity.roleDefinitions.length === 0) {
+    warnings.push({
+      field: 'authIdentity.roleDefinitions',
+      message: 'No role definitions found. Automated tenant provisioning should seed default roles.',
+    });
+  }
+
+  if (config.compliance?.auditLogExportEnabled && !config.compliance?.auditLogWebhookUrl) {
+    warnings.push({
+      field: 'compliance.auditLogWebhookUrl',
+      message: 'Audit log export is enabled but no SIEM webhook URL is configured.',
     });
   }
 
@@ -579,6 +644,21 @@ export function validateConfig(config) {
       allowed: VALID_DOWNSTREAM_INVOICE_FORMATS,
     },
     {
+      field: 'operations.environment',
+      value: config.operations?.environment,
+      allowed: VALID_OPERATIONS_ENVIRONMENTS,
+    },
+    {
+      field: 'compliance.auditLogSiemFormat',
+      value: config.compliance?.auditLogSiemFormat,
+      allowed: VALID_AUDIT_LOG_SIEM_FORMATS,
+    },
+    {
+      field: 'compliance.dataResidencyRegion',
+      value: config.compliance?.dataResidencyRegion,
+      allowed: VALID_DATA_RESIDENCY_REGIONS,
+    },
+    {
       field: 'pipeline.pagespeedStrategy',
       value: config.pipeline?.pagespeedStrategy,
       allowed: VALID_PAGESPEED_STRATEGIES,
@@ -715,6 +795,84 @@ export function validateConfig(config) {
     {
       field: 'billingReseller.usagePricing.ai1kTokenCents',
       value: config.billingReseller?.usagePricing?.ai1kTokenCents,
+      min: 0,
+      max: 10000,
+    },
+    {
+      field: 'operations.slaUptimeTarget',
+      value: config.operations?.slaUptimeTarget,
+      min: 90,
+      max: 100,
+    },
+    {
+      field: 'operations.slaResponseTimeMs',
+      value: config.operations?.slaResponseTimeMs,
+      min: 100,
+      max: 120000,
+    },
+    {
+      field: 'compliance.auditLogRetentionDays',
+      value: config.compliance?.auditLogRetentionDays,
+      min: 7,
+      max: 3650,
+    },
+    {
+      field: 'quotas.apiRequestsPerMinute',
+      value: config.quotas?.apiRequestsPerMinute,
+      min: 0,
+      max: 100000,
+    },
+    {
+      field: 'quotas.oauthRequestsPerMinute',
+      value: config.quotas?.oauthRequestsPerMinute,
+      min: 0,
+      max: 100000,
+    },
+    {
+      field: 'quotas.billingRequestsPerMinute',
+      value: config.quotas?.billingRequestsPerMinute,
+      min: 0,
+      max: 100000,
+    },
+    {
+      field: 'quotas.triggerRequestsPerMinute',
+      value: config.quotas?.triggerRequestsPerMinute,
+      min: 0,
+      max: 100000,
+    },
+    {
+      field: 'quotas.auditRequestsPerHour',
+      value: config.quotas?.auditRequestsPerHour,
+      min: 0,
+      max: 500000,
+    },
+    {
+      field: 'quotas.monthlyAiCalls',
+      value: config.quotas?.monthlyAiCalls,
+      min: 0,
+      max: 100000000,
+    },
+    {
+      field: 'quotas.monthlyTokens',
+      value: config.quotas?.monthlyTokens,
+      min: 0,
+      max: 100000000000,
+    },
+    {
+      field: 'quotas.monthlyExtractionRuns',
+      value: config.quotas?.monthlyExtractionRuns,
+      min: 0,
+      max: 1000000,
+    },
+    {
+      field: 'quotas.monthlyUrlInspections',
+      value: config.quotas?.monthlyUrlInspections,
+      min: 0,
+      max: 10000000,
+    },
+    {
+      field: 'quotas.contentAuditMaxPages',
+      value: config.quotas?.contentAuditMaxPages,
       min: 0,
       max: 10000,
     },

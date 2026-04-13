@@ -72,4 +72,36 @@ describe('config-validator domain and branding security checks', () => {
 
     expect(result.warnings.some((item) => item.field === 'branding.customJs')).toBe(true)
   })
+
+  it('warns when per-tenant noisy-neighbour rate limits are not configured', () => {
+    const config = buildBaseConfig({
+      quotas: {
+        apiRequestsPerMinute: 0,
+        oauthRequestsPerMinute: 0,
+        billingRequestsPerMinute: 0,
+        triggerRequestsPerMinute: 0,
+        auditRequestsPerHour: 0,
+      },
+    })
+
+    const result = validateConfig(config)
+
+    expect(result.warnings.some((item) => item.field === 'quotas')).toBe(true)
+  })
+
+  it('errors on invalid operations and residency enums', () => {
+    const config = buildBaseConfig({
+      operations: {
+        environment: 'staging-like',
+      },
+      compliance: {
+        dataResidencyRegion: 'moon',
+      },
+    })
+
+    const result = validateConfig(config)
+
+    expect(result.errors.some((item) => item.field === 'operations.environment')).toBe(true)
+    expect(result.errors.some((item) => item.field === 'compliance.dataResidencyRegion')).toBe(true)
+  })
 })

@@ -69,4 +69,17 @@ describe('cloudflare-wl-platform scaffold — Phase 7 placeholder check', () => 
         const plugin = brandScatterGuardPlugin({ platformAppName: 'TestApp' })
         expect(plugin.name).toBe('brand-scatter-guard')
     })
+
+    it('src/tenancy/tenant-quota.mjs is present', async () => {
+        const { resolveTenantQuotaPolicy, consumeTenantRateLimit } = await import('../../src/tenancy/tenant-quota.mjs')
+        expect(typeof resolveTenantQuotaPolicy, 'tenant-quota.mjs must export resolveTenantQuotaPolicy').toBe('function')
+        expect(typeof consumeTenantRateLimit, 'tenant-quota.mjs must export consumeTenantRateLimit').toBe('function')
+    })
+
+    it('src/tenancy/tenant-lifecycle.mjs is present', async () => {
+        const { provisionTenant, offboardTenant, exportTenantData } = await import('../../src/tenancy/tenant-lifecycle.mjs')
+        expect(typeof provisionTenant, 'tenant-lifecycle.mjs must export provisionTenant').toBe('function')
+        expect(typeof offboardTenant, 'tenant-lifecycle.mjs must export offboardTenant').toBe('function')
+        expect(typeof exportTenantData, 'tenant-lifecycle.mjs must export exportTenantData').toBe('function')
+    })
 })

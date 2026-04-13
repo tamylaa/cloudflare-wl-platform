@@ -30,6 +30,17 @@
 import { loadConfig, loadConfigFromEnv } from '../config/config-loader.mjs';
 import { extractDomain } from '../config/env-adapter.mjs';
 import { resolveBrand, PLATFORM_DEFAULTS } from '../brand/brand-engine.mjs';
+import { resolveTenantIsolation } from '../config/tenant-isolation.mjs';
+import { consumeTenantQuotaBucket, resolveTenantQuotaPolicy } from './tenant-quota.mjs';
+
+function normalizeTenantSiteId(value = '') {
+    return String(value ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._:-]/g, '-')
+        .replace(/-{2,}/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
 
 // ─── Deploy Mode ────────────────────────────────────────────────────────────
 
@@ -253,6 +264,46 @@ export class TenantContext {
     /** Get the product name for this tenant (delegates to getBrand). */
     getProductName() {
         return this.getBrand().productName;
+    }
+
+    // ── Isolation & Quotas ───────────────────────────────────────────
+
+    /** Resolve normalized tenant-isolation policy from this tenant's config. */
+    getTenantIsolationPolicy() {
+        return resolveTenantIsolation(this.config?.tenantIsolation || {});
+    }
+
+    /**
+     * Assert that a caller-provided siteId belongs to this context.
+     * Throws on mismatch to prevent cross-tenant data access.
+     */
+    assertTenantOwnership(candidateSiteId = '') {
+        const expected = normalizeTenantSiteId(this.siteId);
+        const actual = normalizeTenantSiteId(candidateSiteId);
+
+        if (!actual || actual !== expected) {
+            throw new Error(
+                `[TenantContext] Tenant ownership mismatch: expected '${expected}' but received '${actual || '(empty)'}'`
+            );
+        }
+
+        return true;
+    }
+
+    /** Resolve effective per-tenant quota policy (rate limits + monthly caps). */
+    getQuotaPolicy(options = {}) {
+        return resolveTenantQuotaPolicy(this.config || {}, options);
+    }
+
+    /**
+     * Consume one unit from a tenant-scoped rate-limit bucket.
+     * Buckets map to config.quotas fields (e.g. apiRequestsPerMinute).
+     */
+    consumeRateLimit(bucket = 'apiRequestsPerMinute', options = {}) {
+        return consumeTenantQuotaBucket(this, bucket, {
+            ...options,
+            siteId: options.siteId || this.siteId,
+        });
     }
 
     // ── Feature Flags ─────────────────────────────────────────────────

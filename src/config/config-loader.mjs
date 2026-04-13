@@ -74,7 +74,8 @@ const CONFIG_AUDIT_REDACT_FIELD_PATTERN =
  * @returns {string}
  */
 export function configKey(siteId) {
-  return `${CONFIG_KEY_PREFIX}${siteId}`;
+  const normalizedSiteId = normalizeTenantSiteId(siteId) || String(siteId || '');
+  return `${CONFIG_KEY_PREFIX}${normalizedSiteId}`;
 }
 
 /**
@@ -83,7 +84,8 @@ export function configKey(siteId) {
  * @returns {string}
  */
 export function configRevisionPrefix(siteId) {
-  return `${CONFIG_REVISION_KEY_PREFIX}${siteId}:`;
+  const normalizedSiteId = normalizeTenantSiteId(siteId) || String(siteId || '');
+  return `${CONFIG_REVISION_KEY_PREFIX}${normalizedSiteId}:`;
 }
 
 // Monotonic counter for sub-millisecond revision ordering within a Worker lifetime.
@@ -92,6 +94,68 @@ let _revisionSeq = 0;
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeTenantSiteId(value = '') {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function enforceConfigSiteId(config = {}, siteId = '') {
+  const normalizedSiteId = normalizeTenantSiteId(siteId) || String(siteId || '');
+  const safeConfig = isPlainObject(config) ? config : {};
+  const safeSite = isPlainObject(safeConfig.site) ? safeConfig.site : {};
+
+  return {
+    ...safeConfig,
+    site: {
+      ...safeSite,
+      id: normalizedSiteId,
+    },
+  };
+}
+
+export function validateTenantConfigOwnership(config = {}, siteId = '') {
+  const normalizedSiteId = normalizeTenantSiteId(siteId);
+  const configSiteId = normalizeTenantSiteId(config?.site?.id || '');
+
+  if (!normalizedSiteId) {
+    return {
+      valid: false,
+      normalizedSiteId,
+      configSiteId,
+      message: 'siteId is required for tenant ownership validation',
+    };
+  }
+
+  if (!configSiteId) {
+    return {
+      valid: true,
+      normalizedSiteId,
+      configSiteId,
+      message: '',
+    };
+  }
+
+  if (configSiteId !== normalizedSiteId) {
+    return {
+      valid: false,
+      normalizedSiteId,
+      configSiteId,
+      message: `Config ownership mismatch: expected site.id '${normalizedSiteId}' but found '${configSiteId}'`,
+    };
+  }
+
+  return {
+    valid: true,
+    normalizedSiteId,
+    configSiteId,
+    message: '',
+  };
 }
 
 function isAuditPathAllowlisted(path = '') {
@@ -402,7 +466,8 @@ export function clearConfigCache(env = null, siteId = null) {
   }
 
   if (siteId) {
-    scopedCache.delete(siteId);
+    const normalizedSiteId = normalizeTenantSiteId(siteId) || String(siteId || '');
+    scopedCache.delete(normalizedSiteId);
     if (scopedCache.size === 0) {
       // Clean up empty cache to allow GC
       _cache.delete(getCacheScope(env));
@@ -428,21 +493,22 @@ export function clearConfigCache(env = null, siteId = null) {
  */
 export async function loadConfig(env, siteId, options = {}) {
   const { strict = false, skipCache = false, cacheTtlMs = DEFAULT_CACHE_TTL_MS } = options;
+  const normalizedSiteId = normalizeTenantSiteId(siteId) || String(siteId || '');
 
-  if (!siteId) {
+  if (!normalizedSiteId) {
     throw new Error('[ConfigLoader] siteId is required');
   }
 
   const scopedCache = getScopedCache(env);
 
   // Check cache (but verify it hasn't expired)
-  if (!skipCache && scopedCache?.has(siteId)) {
-    const cacheEntry = scopedCache.get(siteId);
+  if (!skipCache && scopedCache?.has(normalizedSiteId)) {
+    const cacheEntry = scopedCache.get(normalizedSiteId);
     if (!isCacheEntryStale(cacheEntry, cacheTtlMs)) {
       return cacheEntry.config;
     }
     // Cache expired; delete stale entry and reload from KV
-    scopedCache.delete(siteId);
+    scopedCache.delete(normalizedSiteId);
   }
 
   const kv = env.KV_CONFIG || env.KV_ANALYTICS;
@@ -468,8 +534,19 @@ export async function loadConfig(env, siteId, options = {}) {
 
   // 2. If no KV config, fall back to env adapter
   if (!storedConfig) {
-    storedConfig = buildConfigFromEnv(env, siteId);
+    storedConfig = buildConfigFromEnv(env, normalizedSiteId);
   }
+
+  const ownership = validateTenantConfigOwnership(storedConfig, normalizedSiteId);
+  if (!ownership.valid) {
+    const message = `[ConfigLoader] ${ownership.message}`;
+    if (strict) {
+      throw new Error(message);
+    }
+    console.error(message);
+  }
+
+  storedConfig = enforceConfigSiteId(storedConfig, normalizedSiteId);
 
   // 3. Merge with defaults
   const merged = mergeWithDefaults(storedConfig);
@@ -497,7 +574,7 @@ export async function loadConfig(env, siteId, options = {}) {
 
   // 5. Freeze and cache with timestamp
   const frozen = deepFreeze(merged);
-  scopedCache?.set(siteId, {
+  scopedCache?.set(normalizedSiteId, {
     config: frozen,
     createdAt: Date.now(),
   });
@@ -570,9 +647,25 @@ export async function listConfigRevisions(env, siteId, options = {}) {
 export async function saveConfig(env, siteId, config, options = {}) {
   const { merge = true, audit = {}, maxRetries = 3 } = options;
   const kv = env.KV_CONFIG || env.KV_ANALYTICS;
+  const normalizedSiteId = normalizeTenantSiteId(siteId) || String(siteId || '');
 
   if (!kv) {
     throw new Error('[ConfigLoader] No KV binding available (KV_CONFIG or KV_ANALYTICS)');
+  }
+
+  const requestedOwnership = validateTenantConfigOwnership(config, normalizedSiteId);
+  if (!requestedOwnership.valid) {
+    return {
+      valid: false,
+      errors: [
+        {
+          field: 'site.id',
+          message: requestedOwnership.message,
+        },
+      ],
+      warnings: [],
+      ownershipViolation: true,
+    };
   }
 
   let attempt = 0;
@@ -600,12 +693,28 @@ export async function saveConfig(env, siteId, config, options = {}) {
         /* no existing config */
       }
 
+      const existingOwnership = validateTenantConfigOwnership(existing || {}, normalizedSiteId);
+      if (existing && !existingOwnership.valid) {
+        return {
+          valid: false,
+          errors: [
+            {
+              field: 'site.id',
+              message: existingOwnership.message,
+            },
+          ],
+          warnings: [],
+          ownershipViolation: true,
+        };
+      }
+
       // MERGE: Combine with user input
       let toSave = config;
       if (merge && existing) {
         const { deepMerge } = await import('./customer-config.schema.mjs');
         toSave = deepMerge(existing, config);
       }
+      toSave = enforceConfigSiteId(toSave, normalizedSiteId);
 
       // VALIDATE: Check config integrity
       const merged = mergeWithDefaults(toSave);
@@ -625,19 +734,19 @@ export async function saveConfig(env, siteId, config, options = {}) {
         __meta: {
           generation: nextGeneration,
           storedAtMs: Date.now(),
-          siteId,
+          siteId: normalizedSiteId,
         },
       };
 
       // Use put with the version condition (if KV supports it)
       // If not, this is still safer than before because we have a generation number
       // that consuming apps can check for concurrent writes
-      await kv.put(configKey(siteId), JSON.stringify(wrapped));
+      await kv.put(configKey(normalizedSiteId), JSON.stringify(wrapped));
 
       // Write audit revision (after confirming KV write succeeded)
       await writeConfigRevision(
         kv,
-        siteId,
+        normalizedSiteId,
         existing || {},
         toSave,
         validation,
@@ -646,7 +755,7 @@ export async function saveConfig(env, siteId, config, options = {}) {
       );
 
       // Clear cache for this siteId to ensure next read gets fresh data
-      clearConfigCache(env, siteId);
+      clearConfigCache(env, normalizedSiteId);
 
       return { ...validation, generation: nextGeneration };
     } catch (err) {
@@ -663,7 +772,7 @@ export async function saveConfig(env, siteId, config, options = {}) {
 
   // All retries exhausted
   console.error(
-    `[ConfigLoader] CAS write failed for '${siteId}' after ${maxRetries} retries:`,
+    `[ConfigLoader] CAS write failed for '${normalizedSiteId}' after ${maxRetries} retries:`,
     lastError?.message
   );
 
