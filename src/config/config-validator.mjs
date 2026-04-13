@@ -362,6 +362,34 @@ export function validateConfig(config) {
     }
   }
 
+  // Webhook publicBaseUrl must not expose a vendor-platform domain
+  if (config.communications?.webhooks?.publicBaseUrl) {
+    const wbUrl = String(config.communications.webhooks.publicBaseUrl).toLowerCase();
+    const vendorWebhookPatterns = [/\.workers\.dev/, /\.pages\.dev/, /cloudflare\.com/];
+    if (vendorWebhookPatterns.some((re) => re.test(wbUrl))) {
+      warnings.push({
+        field: 'communications.webhooks.publicBaseUrl',
+        message: `publicBaseUrl '${wbUrl}' exposes a vendor-platform domain. Set a white-labeled custom domain for public webhook metadata.`,
+      });
+    }
+  }
+
+  // Warn when all email template overrides are empty (platform default copy will be used)
+  const emailTemplates = config.communications?.email?.templates;
+  if (emailTemplates && typeof emailTemplates === 'object') {
+    const templateKeys = ['onboarding', 'passwordReset', 'billing', 'alerts'];
+    const allEmpty = templateKeys.every((key) => {
+      const t = emailTemplates[key];
+      return !t || (!t.subject && !t.headline && !t.introText && !t.ctaLabel);
+    });
+    if (allEmpty && config.operations?.environment === 'production') {
+      warnings.push({
+        field: 'communications.email.templates',
+        message: 'All email template overrides are empty. Production tenants should provide white-label subject, headline, and CTA copy so platform default messaging is not shown to end users.',
+      });
+    }
+  }
+
   if (config.billingReseller?.partnerPortalUrl) {
     const portalUrl = String(config.billingReseller.partnerPortalUrl);
     if (!portalUrl.startsWith('http://') && !portalUrl.startsWith('https://')) {

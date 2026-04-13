@@ -372,10 +372,105 @@ async function sendViaResend(apiKey, recipientEmail, htmlBody, textBody, sender 
   return { success: true, provider: 'resend', messageId: data.id };
 }
 
+// ─── Prompt 1: Unified Email Template Context Assembler ───────────────────────
+
+/**
+ * Build a complete email rendering context object by merging:
+ *   - Per-tenant sender identity (fromAddress, fromName, replyTo, subjectPrefix)
+ *   - Brand visual tokens (logo, colors, productName, tagline, footer gradient)
+ *   - Template copy overrides (subject, headline, introText, ctaLabel, footerNote)
+ *   - Sending domain / suppression flags from communications config
+ *
+ * Consuming app passes this context directly to any i18n-safe email template
+ * engine (Handlebars, Nunjucks, MJML, etc.) — no vendor branding will appear
+ * if the tenant has fully configured their white-label fields.
+ *
+ * @param {object|null} tenant       - Resolved tenant (from tenant-context)
+ * @param {object} config            - Full merged customer config (post mergeWithDefaults)
+ * @param {object} brand             - Resolved brand object (from brand-engine)
+ * @param {string} templateKey       - One of: 'onboarding' | 'passwordReset' | 'billing' | 'alerts'
+ * @param {object} [overrides]       - Call-site overrides: { subject, recipientEmail, ctaUrl, ... }
+ * @returns {object}
+ */
+export function buildEmailTemplateContext(tenant, config = {}, brand = {}, templateKey = 'alerts', overrides = {}) {
+  const identity = resolveSenderIdentity(tenant, null);
+
+  const commsEmail = config?.communications?.email || {};
+  const templateOverride = commsEmail?.templates?.[templateKey] || {};
+
+  // Sending domain: explicit emailSender.fromAddress domain → config.domainBranding.sendingDomain →
+  // brand appOrigin domain → empty (caller must provide)
+  const senderAddress = identity.fromAddress || '';
+  const sendingDomain = (() => {
+    if (senderAddress.includes('@')) {
+      return senderAddress.split('@')[1] || '';
+    }
+    if (config?.domainBranding?.sendingDomain) {
+      return config.domainBranding.sendingDomain;
+    }
+    if (config?.domainControl?.sendingDomain) {
+      return config.domainControl.sendingDomain;
+    }
+    return '';
+  })();
+
+  const subjectBase = templateOverride.subject || overrides.subject || '';
+  const subjectPrefix = identity.subjectPrefix
+    ? `${identity.subjectPrefix} `
+    : (commsEmail.templates?.[templateKey]?.subject ? '' : '');
+
+  return Object.freeze({
+    // Sender identity
+    fromName: identity.fromName || brand?.productName || 'Notifications',
+    fromAddress: identity.fromAddress || '',
+    replyTo: identity.replyTo || commsEmail.replyToAddress || '',
+    sendingDomain,
+    subjectPrefix,
+
+    // Assembled subject (prefix + template override + call-site override)
+    subject: subjectBase ? `${subjectPrefix}${subjectBase}` : '',
+
+    // Visual brand tokens
+    productName: brand?.productName || '',
+    tagline: brand?.tagline || '',
+    logoUrl: brand?.resolvedLogoUrl || brand?.logoUrl || '',
+    faviconUrl: brand?.faviconUrl || '',
+    primaryColor: brand?.primaryColor || '#3b82f6',
+    secondaryColor: brand?.secondaryColor || '#8b5cf6',
+    accentColor: brand?.accentColor || '#14b8a6',
+    emailHeaderGradient: brand?.emailHeaderGradient || 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+
+    // Template copy (tenant overrides → schema defaults)
+    templateKey,
+    headline: templateOverride.headline || overrides.headline || '',
+    introText: templateOverride.introText || overrides.introText || '',
+    ctaLabel: templateOverride.ctaLabel || overrides.ctaLabel || '',
+    ctaUrl: overrides.ctaUrl || '',
+    footerNote: templateOverride.footerNote || overrides.footerNote || '',
+    preheader: templateOverride.preheader || overrides.preheader || '',
+
+    // Shared footer copy
+    footerText: commsEmail.footerText || '',
+    legalFooterText: commsEmail.legalFooterText || '',
+    suppressPlatformFooter: commsEmail.suppressPlatformFooter === true,
+
+    // Support / branding links
+    supportEmail: config?.domainBranding?.supportEmail || config?.domainControl?.supportEmail || '',
+    supportPortalUrl: config?.domainBranding?.supportPortalUrl || config?.domainControl?.supportPortalUrl || '',
+    passwordResetUrl: config?.authIdentity?.passwordResetUrl || overrides.passwordResetUrl || '',
+    unsubscribeUrl: overrides.unsubscribeUrl || '',
+
+    // Recipient (call-site must supply)
+    recipientEmail: overrides.recipientEmail || '',
+    recipientName: overrides.recipientName || '',
+  });
+}
+
 export default {
   sendEmailNotification,
   resolveSenderIdentity,
   resolveEmailCircuitBreaker,
+  buildEmailTemplateContext,
   sendViaSendGrid,
   sendViaBrevo,
   sendViaMailgun,
