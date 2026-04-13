@@ -47,6 +47,22 @@ describe('cloudflare-wl-platform scaffold — Phase 7 placeholder check', () => 
         expect(typeof clearConfigCache, 'config-loader.mjs must export clearConfigCache').toBe('function')
     })
 
+    it('src/index.mjs exports branding security policy helpers', async () => {
+        const { enforceBrandingSecurityPolicy, BRANDING_ASSET_FIELD_POLICY } = await import('../../src/index.mjs')
+        expect(typeof enforceBrandingSecurityPolicy, 'index.mjs must export enforceBrandingSecurityPolicy').toBe('function')
+        expect(typeof BRANDING_ASSET_FIELD_POLICY, 'index.mjs must export BRANDING_ASSET_FIELD_POLICY').toBe('object')
+    })
+
+    it('src/config/branding-security-policy.mjs is importable and callable', async () => {
+        const { enforceBrandingSecurityPolicy } = await import('../../src/config/branding-security-policy.mjs')
+        expect(typeof enforceBrandingSecurityPolicy, 'branding-security-policy.mjs must export enforceBrandingSecurityPolicy').toBe('function')
+
+        const result = enforceBrandingSecurityPolicy({}, { mode: 'config' })
+        expect(result.valid).toBe(true)
+        expect(Array.isArray(result.errors)).toBe(true)
+        expect(Array.isArray(result.warnings)).toBe(true)
+    })
+
     it('src/guards/brand-scatter-guard.mjs is present', async () => {
         const { brandScatterGuardPlugin } = await import('../../src/guards/brand-scatter-guard.mjs')
         expect(typeof brandScatterGuardPlugin, 'brand-scatter-guard.mjs must export brandScatterGuardPlugin').toBe('function')
