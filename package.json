@@ -1,0 +1,27 @@
+{
+    "name": "@internal/cloudflare-wl-platform",
+    "version": "0.1.0",
+    "type": "module",
+    "private": true,
+    "exports": {
+        ".": "./src/index.mjs",
+        "./tenancy": "./src/tenancy/tenant-context.mjs",
+        "./brand": "./src/brand/brand-engine.mjs",
+        "./email": "./src/email/email-sender.mjs",
+        "./billing": "./src/billing/billing-adapter.mjs",
+        "./config": "./src/config/config-loader.mjs",
+        "./guards": "./src/guards/brand-scatter-guard.mjs",
+        "./domain": "./src/tenancy/domain-control.mjs"
+    },
+    "scripts": {
+        "test": "vitest run",
+        "test:watch": "vitest"
+    },
+    "devDependencies": {
+        "vitest": "^4.0.18",
+        "@vitest/coverage-v8": "^4.0.18"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    }
+}

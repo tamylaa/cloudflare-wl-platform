@@ -1,0 +1,4 @@
+name = "cloudflare-wl-platform"
+compatibility_date = "2024-09-23"
+# This package is consumed as a library, not deployed as a Worker.
+# No main entry point or routes configured here.
