@@ -166,6 +166,64 @@ export function validateConfig(config) {
     });
   }
 
+  // ── domainRouting / domainBranding format ─────────────────────
+  if (config.domainRouting?.appHostname) {
+    const host = config.domainRouting.appHostname;
+    if (host.includes('://') || host.includes('/')) {
+      errors.push({
+        field: 'domainRouting.appHostname',
+        message: `domainRouting.appHostname should be a bare hostname (e.g. 'app.example.com'), not a URL — got '${host}'`,
+      });
+    }
+  }
+
+  if (config.domainRouting?.dnsTarget) {
+    const dnsTarget = String(config.domainRouting.dnsTarget);
+    if (dnsTarget.includes('://') || dnsTarget.includes('/')) {
+      warnings.push({
+        field: 'domainRouting.dnsTarget',
+        message: `domainRouting.dnsTarget should be a bare hostname/CNAME target — got '${dnsTarget}'`,
+      });
+    }
+  }
+
+  for (const field of ['appOrigin']) {
+    const value = config.domainRouting?.[field];
+    if (value && !String(value).startsWith('http://') && !String(value).startsWith('https://')) {
+      warnings.push({
+        field: `domainRouting.${field}`,
+        message: `${field} should be a full http/https URL — got '${value}'`,
+      });
+    }
+  }
+
+  for (const field of ['docsUrl', 'helpCenterUrl', 'supportPortalUrl', 'statusPageUrl', 'incidentReportingUrl', 'onboardingUrl']) {
+    const value = config.domainBranding?.[field];
+    if (value && !String(value).startsWith('http://') && !String(value).startsWith('https://')) {
+      warnings.push({
+        field: `domainBranding.${field}`,
+        message: `${field} should be a full http/https URL — got '${value}'`,
+      });
+    }
+  }
+
+  if (config.domainBranding?.supportEmail && !String(config.domainBranding.supportEmail).includes('@')) {
+    warnings.push({
+      field: 'domainBranding.supportEmail',
+      message: `supportEmail should be a valid mailbox address — got '${config.domainBranding.supportEmail}'`,
+    });
+  }
+
+  if (config.domainBranding?.sendingDomain) {
+    const sendingDomain = String(config.domainBranding.sendingDomain);
+    if (sendingDomain.includes('://') || sendingDomain.includes('/')) {
+      warnings.push({
+        field: 'domainBranding.sendingDomain',
+        message: `sendingDomain should be a bare email domain (e.g. 'updates.example.com') — got '${sendingDomain}'`,
+      });
+    }
+  }
+
   if (config.tenantIsolation?.tenantRole === 'subtenant' && !config.tenantIsolation?.masterTenantId) {
     warnings.push({
       field: 'tenantIsolation.masterTenantId',
@@ -340,6 +398,28 @@ export function validateConfig(config) {
     });
   }
 
+  if (
+    config.branding?.customJsSandboxCapabilities !== undefined &&
+    !Array.isArray(config.branding.customJsSandboxCapabilities)
+  ) {
+    warnings.push({
+      field: 'branding.customJsSandboxCapabilities',
+      message: 'customJsSandboxCapabilities should be an array of iframe sandbox capability strings.',
+    });
+  }
+
+  if (Array.isArray(config.branding?.customJsSandboxCapabilities)) {
+    for (const capability of config.branding.customJsSandboxCapabilities) {
+      if (typeof capability !== 'string' || !/^allow-[a-z-]+$/i.test(capability)) {
+        warnings.push({
+          field: 'branding.customJsSandboxCapabilities',
+          message: `Invalid sandbox capability '${capability}'. Expected values like 'allow-scripts'.`,
+        });
+        break;
+      }
+    }
+  }
+
   if (config.authIdentity?.roleDefinitions !== undefined) {
     if (!Array.isArray(config.authIdentity.roleDefinitions)) {
       errors.push({
@@ -396,6 +476,21 @@ export function validateConfig(config) {
     {
       field: 'domainControl.emailAuthStatus',
       value: config.domainControl?.emailAuthStatus,
+      allowed: VALID_EMAIL_AUTH_STATUSES,
+    },
+    {
+      field: 'domainRouting.domainStatus',
+      value: config.domainRouting?.domainStatus,
+      allowed: VALID_DOMAIN_CONTROL_STATUSES,
+    },
+    {
+      field: 'domainRouting.sslStatus',
+      value: config.domainRouting?.sslStatus,
+      allowed: VALID_DOMAIN_CONTROL_STATUSES,
+    },
+    {
+      field: 'domainBranding.emailAuthStatus',
+      value: config.domainBranding?.emailAuthStatus,
       allowed: VALID_EMAIL_AUTH_STATUSES,
     },
     {

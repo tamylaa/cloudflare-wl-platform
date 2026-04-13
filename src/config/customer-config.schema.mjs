@@ -151,6 +151,7 @@ export const customerConfigDefaults = Object.freeze({
     customCss: '', // Optional tenant CSS override
     customJs: '', // Optional tenant JS enhancement
     allowUnsafeCustomJs: false, // Explicit opt-in for trusted custom JS on public surfaces
+    customJsSandboxCapabilities: ['allow-scripts'], // Allowed iframe sandbox capabilities for custom JS isolation
     customJsCspPolicy: PLATFORM_DEFAULTS.customJsCspPolicy, // Trusted custom JS should still run under explicit CSP
     emailHeaderGradient: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
     // ── Labels (used in HTML templates) ──

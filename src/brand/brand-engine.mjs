@@ -9,7 +9,7 @@
  * @module config/brand
  */
 
-import { resolveDomainControl } from '../tenancy/domain-control.mjs';
+import { resolveDomainControlFromConfig } from '../tenancy/domain-control.mjs';
 import { enforceBrandingSecurityPolicy } from '../config/branding-security-policy.mjs';
 
 function sanitizeEmbeddedText(value = '') {
@@ -18,6 +18,12 @@ function sanitizeEmbeddedText(value = '') {
 
 function stripQuotes(value = '') {
     return String(value || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+function escapeHtmlAttribute(value = '') {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;');
 }
 
 // ── Platform Defaults ───────────────────────────────────────────────────
@@ -49,6 +55,7 @@ const PLATFORM_DEFAULTS = Object.freeze({
     customCss: '',
     customJs: '',
     allowUnsafeCustomJs: false,
+    customJsSandboxCapabilities: ['allow-scripts'],
     // CRITICAL: CSP policy for custom.js. Enabled only if allowUnsafeCustomJs=true.
     // Injected as <meta http-equiv="Content-Security-Policy" content="...">
     // Default: 'script-src \'none\'' (blocks all scripts when custom.js enabled without sandbox)
@@ -97,7 +104,7 @@ export function resolveBrand(env = {}, tenant = null, runtimeBranding = null) {
     const tenantEmail = tenant?.config?.email || {};
     const runtime = runtimeBranding && typeof runtimeBranding === 'object' ? runtimeBranding : {};
     const mergedBranding = { ...tenantBranding, ...runtime };
-    const domainControl = resolveDomainControl(tenant?.config?.domainControl || {});
+    const domainControl = resolveDomainControlFromConfig(tenant?.config || {});
 
     const publicSiteUrl =
         domainControl.appOrigin || env.APP_URL || mergedBranding.siteUrl || PLATFORM_DEFAULTS.siteUrl;
@@ -155,6 +162,10 @@ export function resolveBrand(env = {}, tenant = null, runtimeBranding = null) {
         customJs: mergedBranding.customJs || PLATFORM_DEFAULTS.customJs,
         allowUnsafeCustomJs:
             mergedBranding.allowUnsafeCustomJs === true || env.ALLOW_TENANT_CUSTOM_JS === '1',
+        customJsSandboxCapabilities:
+            Array.isArray(mergedBranding.customJsSandboxCapabilities)
+                ? mergedBranding.customJsSandboxCapabilities
+                : PLATFORM_DEFAULTS.customJsSandboxCapabilities,
         customJsCspPolicy:
             mergedBranding.customJsCspPolicy || PLATFORM_DEFAULTS.customJsCspPolicy,
 
@@ -327,6 +338,106 @@ export function brandScriptOverrides(brand = PLATFORM_DEFAULTS) {
     }
 
     return sanitizeEmbeddedText(brand?.customJs || '').trim();
+}
+
+export const CUSTOM_JS_SANDBOX_CAPABILITY_ALLOWLIST = Object.freeze([
+    'allow-downloads',
+    'allow-forms',
+    'allow-modals',
+    'allow-orientation-lock',
+    'allow-pointer-lock',
+    'allow-popups',
+    'allow-popups-to-escape-sandbox',
+    'allow-presentation',
+    'allow-same-origin',
+    'allow-scripts',
+    'allow-storage-access-by-user-activation',
+    'allow-top-navigation-by-user-activation',
+]);
+
+/**
+ * Resolve and sanitize iframe sandbox capabilities for tenant custom JS.
+ * Unknown capabilities are dropped.
+ *
+ * @param {Brand} [brand]
+ * @param {string[]|string|null} [requestedCapabilities]
+ * @returns {string[]}
+ */
+export function resolveCustomJsSandboxCapabilities(
+    brand = PLATFORM_DEFAULTS,
+    requestedCapabilities = null
+) {
+    const source =
+        requestedCapabilities ??
+        brand?.customJsSandboxCapabilities ??
+        PLATFORM_DEFAULTS.customJsSandboxCapabilities;
+
+    const values = Array.isArray(source)
+        ? source
+        : String(source || '')
+              .split(/[\s,]+/)
+              .map((item) => item.trim())
+              .filter(Boolean);
+
+    const filtered = values.filter((capability) =>
+        CUSTOM_JS_SANDBOX_CAPABILITY_ALLOWLIST.includes(capability)
+    );
+
+    const unique = [...new Set(filtered)];
+    if (unique.length === 0) {
+        return [...PLATFORM_DEFAULTS.customJsSandboxCapabilities];
+    }
+    return unique;
+}
+
+/**
+ * Build an iframe descriptor for isolated custom JS execution.
+ * Consuming applications can use this descriptor to render a sandboxed iframe.
+ *
+ * @param {Brand} [brand]
+ * @param {{ capabilities?: string[]|string|null, title?: string }} [options]
+ * @returns {{ sandbox: string, srcdoc: string, title: string }|null}
+ */
+export function buildCustomJsSandboxIframeDescriptor(brand = PLATFORM_DEFAULTS, options = {}) {
+    if (brand?.allowUnsafeCustomJs !== true) {
+        return null;
+    }
+
+    const script = brandScriptOverrides(brand);
+    if (!script) {
+        return null;
+    }
+
+    const capabilities = resolveCustomJsSandboxCapabilities(brand, options?.capabilities);
+    const title = String(options?.title || `${brand?.productName || 'Tenant'} custom scripts`).trim();
+
+    return {
+        sandbox: capabilities.join(' '),
+        srcdoc: `<meta charset="utf-8"><script>${script}</script>`,
+        title,
+    };
+}
+
+/**
+ * Render a sandboxed iframe HTML tag for tenant custom JS.
+ *
+ * @param {Brand} [brand]
+ * @param {{ capabilities?: string[]|string|null, title?: string, className?: string }} [options]
+ * @returns {string}
+ */
+export function renderCustomJsSandboxIframe(brand = PLATFORM_DEFAULTS, options = {}) {
+    const descriptor = buildCustomJsSandboxIframeDescriptor(brand, options);
+    if (!descriptor) {
+        return '';
+    }
+
+    const className = options?.className
+        ? ` class="${escapeHtmlAttribute(sanitizeEmbeddedText(options.className))}"`
+        : '';
+
+    return `<iframe sandbox="${escapeHtmlAttribute(descriptor.sandbox)}" title="${escapeHtmlAttribute(
+        descriptor.title
+    )}"${className} srcdoc="${escapeHtmlAttribute(descriptor.srcdoc)}"></iframe>`;
 }
 
 /**

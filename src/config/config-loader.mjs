@@ -33,14 +33,40 @@ const CONFIG_REVISION_KEY_PREFIX = 'customer-config-revision:';
 const CONFIG_AUDIT_RETENTION_TTL = TTL.REMEMBER_ME || 90 * 24 * 60 * 60;
 const CONFIG_AUDIT_INLINE_FIELD_LIMIT = 2048;
 const CONFIG_AUDIT_SNAPSHOT_MAX_BYTES = 32 * 1024;
-const CONFIG_AUDIT_OMITTABLE_FIELDS = new Set([
-  'logoUrl',
-  'faviconUrl',
-  'ogImageUrl',
-  'fontUrl',
-  'customCss',
-  'customJs',
+const CONFIG_AUDIT_REDACTION_ALLOWLIST = new Set([
+  'site.id',
+  'site.domain',
+  'site.siteUrl',
+  'site.name',
+  'branding.productName',
+  'branding.tagline',
+  'domainControl.appHostname',
+  'domainControl.appOrigin',
+  'domainRouting.appHostname',
+  'domainRouting.appOrigin',
+  'domainBranding.docsUrl',
+  'domainBranding.helpCenterUrl',
+  'domainBranding.supportPortalUrl',
 ]);
+const CONFIG_AUDIT_ALWAYS_REDACT_FIELDS = new Set([
+  'logourl',
+  'faviconurl',
+  'ogimageurl',
+  'fonturl',
+  'customcss',
+  'customjs',
+  'apikey',
+  'clientsecret',
+  'clientsecretsecret',
+  'refreshtoken',
+  'token',
+  'password',
+  'privatekey',
+  'certificate',
+  'webhookurl',
+]);
+const CONFIG_AUDIT_REDACT_FIELD_PATTERN =
+  /(secret|token|password|api[-_]?key|privatekey|certificate|webhookurl|refresh)/i;
 
 /**
  * Build the KV key for a customer config.
@@ -68,16 +94,35 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isAuditPathAllowlisted(path = '') {
+  return CONFIG_AUDIT_REDACTION_ALLOWLIST.has(String(path || '').trim());
+}
+
+function shouldRedactAuditPath(path = '') {
+  const normalizedPath = String(path || '').trim();
+  const fieldName = normalizedPath.split('.').pop() || '';
+  const normalizedFieldName = fieldName.toLowerCase();
+  if (!fieldName || isAuditPathAllowlisted(normalizedPath)) {
+    return false;
+  }
+
+  return (
+    CONFIG_AUDIT_ALWAYS_REDACT_FIELDS.has(normalizedFieldName) ||
+    CONFIG_AUDIT_REDACT_FIELD_PATTERN.test(normalizedFieldName)
+  );
+}
+
 function trimAuditSnapshotValue(value, path = '') {
+  if (shouldRedactAuditPath(path)) {
+    return `[redacted from audit snapshot: ${path || 'value'}]`;
+  }
+
   if (typeof value === 'string') {
-    const fieldName = String(path || '').split('.').pop() || '';
-    const isInlineAsset = /^data:/i.test(value.trim());
     const shouldOmit =
-      value.length > CONFIG_AUDIT_INLINE_FIELD_LIMIT &&
-      (CONFIG_AUDIT_OMITTABLE_FIELDS.has(fieldName) || isInlineAsset);
+      value.length > CONFIG_AUDIT_INLINE_FIELD_LIMIT && !isAuditPathAllowlisted(path);
 
     if (shouldOmit) {
-      return `[omitted from audit snapshot: ${path || fieldName || 'value'} (${value.length} chars)]`;
+      return `[omitted from audit snapshot: ${path || 'value'} (${value.length} chars)]`;
     }
 
     return value;
@@ -122,7 +167,11 @@ function buildSafeAuditSnapshot(snapshot = null, label = 'snapshot') {
 }
 
 function snapshotHasAuditOmissions(snapshot) {
-  return JSON.stringify(snapshot || {}).includes('[omitted from audit snapshot:');
+  const serialized = JSON.stringify(snapshot || {});
+  return (
+    serialized.includes('[omitted from audit snapshot:') ||
+    serialized.includes('[redacted from audit snapshot:')
+  );
 }
 
 function collectChangedPaths(beforeValue, afterValue, prefix = '') {

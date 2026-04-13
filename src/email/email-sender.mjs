@@ -3,6 +3,8 @@
  * Sends formatted email notifications to webmaster
  */
 
+import { getCircuitBreaker } from '../utils/circuit-breaker.mjs';
+
 /**
  * Resolve the effective sender identity for an outbound email.
  *
@@ -16,7 +18,7 @@
  * @param {Object|null} env - Cloudflare Worker environment bindings
  * @returns {{ fromName: string, fromAddress: string, replyTo: string|null, subjectPrefix: string }}
  */
-function resolveSenderIdentity(tenant, env) {
+export function resolveSenderIdentity(tenant, env) {
   const es = tenant?.config?.emailSender;
   if (es?.fromAddress) {
     return {
@@ -49,10 +51,42 @@ function resolveSenderIdentity(tenant, env) {
 
   return {
     fromName: 'Notifications',
-    fromAddress: platformAddress || 'noreply@localhost',
+    fromAddress: platformAddress || '',
     replyTo: null,
     subjectPrefix: '',
   };
+}
+
+/**
+ * Resolve an email circuit breaker instance.
+ * Prefers explicitly supplied breaker and otherwise lazily creates a named
+ * breaker per provider when enabled.
+ *
+ * @param {Object} config
+ * @returns {Object|null}
+ */
+export function resolveEmailCircuitBreaker(config = {}) {
+  if (config?.circuitBreaker && typeof config.circuitBreaker.execute === 'function') {
+    return config.circuitBreaker;
+  }
+
+  if (config?.enableCircuitBreaker === false) {
+    return null;
+  }
+
+  if (!config?.provider) {
+    return null;
+  }
+
+  const breakerName =
+    String(config.circuitBreakerName || `email-${String(config.provider).toLowerCase()}`).trim() ||
+    'email-provider';
+  const breakerOptions =
+    config?.circuitBreakerOptions && typeof config.circuitBreakerOptions === 'object'
+      ? config.circuitBreakerOptions
+      : undefined;
+
+  return getCircuitBreaker(breakerName, breakerOptions);
 }
 
 /**
@@ -108,8 +142,16 @@ export async function sendEmailNotification(config, recipientEmail, htmlBody, te
   }
 
   if (!senderConfig.fromAddress) {
-    console.warn('[EmailSender] No fromAddress configured — email may be rejected by provider');
+    return {
+      success: false,
+      provider: config.provider,
+      error:
+        'No fromAddress configured. Refusing to send without an explicit sender identity.',
+      retryable: false,
+    };
   }
+
+  const circuitBreaker = resolveEmailCircuitBreaker(config);
 
   // Define the send operation
   const sendOperation = async () => {
@@ -142,9 +184,9 @@ export async function sendEmailNotification(config, recipientEmail, htmlBody, te
 
   // Execute with optional circuit breaker
   try {
-    if (config.circuitBreaker) {
+    if (circuitBreaker) {
       // Use circuit breaker if provided — prevents cascading failures
-      return await config.circuitBreaker.execute(sendOperation, async () => {
+      return await circuitBreaker.execute(sendOperation, async () => {
         console.warn(`[EmailSender] Circuit breaker OPEN — returning failure without attempting send`);
         return {
           success: false,
@@ -332,6 +374,8 @@ async function sendViaResend(apiKey, recipientEmail, htmlBody, textBody, sender 
 
 export default {
   sendEmailNotification,
+  resolveSenderIdentity,
+  resolveEmailCircuitBreaker,
   sendViaSendGrid,
   sendViaBrevo,
   sendViaMailgun,

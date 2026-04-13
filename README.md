@@ -143,6 +143,21 @@ The plugin reads `options.platformAppName` and registers a `expect.extend` match
 - Consuming apps must implement sandboxing (iframe) to enable
 - **Recommendation**: Wrap in `<iframe sandbox="allow-scripts">`
 
+#### 7. Runtime Sandbox Helpers (NEW)
+- `buildCustomJsSandboxIframeDescriptor()` returns `{ sandbox, srcdoc, title }` for isolated custom JS rendering
+- `renderCustomJsSandboxIframe()` renders a safe iframe snippet with capability filtering
+- `resolveCustomJsSandboxCapabilities()` filters requested capabilities through a strict allowlist
+
+#### 8. Domain Split-Config Compatibility (NEW)
+- Runtime domain resolution now merges legacy `domainControl` with `domainRouting` + `domainBranding`
+- Support URLs (`docsUrl`, `helpCenterUrl`, `supportPortalUrl`, status/onboarding URLs) are normalized and sanitized
+- Works with legacy stored configs and new split-field configs without migration downtime
+
+#### 9. Branded Email Sender Guard (NEW)
+- Email sends now fail fast when no explicit sender identity is available
+- Prevents accidental fallback to unbranded localhost sender addresses
+- Circuit breaker can be auto-resolved per provider (`email-sendgrid`, `email-mailgun`, etc.)
+
 ### Config Cache Behavior
 
 Loaded configs are cached in-memory per Worker isolate for 5 minutes by default.

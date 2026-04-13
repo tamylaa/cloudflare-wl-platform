@@ -3,7 +3,8 @@
  */
 
 export const SERVICE_NAMES = Object.freeze({
-  CORE: 'visibility-analytics',
+  CORE: 'cloudflare-wl-platform',
+  LEGACY_CORE: 'visibility-analytics',
   AI_GATE: 'ai-gate',
   API_ROUTES: 'api-routes',
   INDEX_NOTIFICATION: 'index-notification',

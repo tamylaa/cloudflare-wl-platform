@@ -171,6 +171,9 @@ export function resolveDomainControl(config = {}) {
     const supportEmail = safeString(config.supportEmail).toLowerCase();
     const sendingDomain = normalizeEmailDomain(config.sendingDomain || config.emailFromDomain);
     const dnsTarget = normalizeHostname(config.dnsTarget);
+    const statusPageUrl = normalizeUrl(config.statusPageUrl || '');
+    const incidentReportingUrl = normalizeUrl(config.incidentReportingUrl || '');
+    const onboardingUrl = normalizeUrl(config.onboardingUrl || '');
     const domainStatus = DOMAIN_CONTROL_STATUS_VALUES.includes(config.domainStatus)
         ? config.domainStatus
         : DOMAIN_CONTROL_STATUS.UNCONFIGURED;
@@ -189,6 +192,9 @@ export function resolveDomainControl(config = {}) {
         helpCenterUrl,
         supportPortalUrl,
         supportEmail,
+        statusPageUrl,
+        incidentReportingUrl,
+        onboardingUrl,
         sendingDomain,
         dnsTarget,
         domainStatus,
@@ -196,6 +202,42 @@ export function resolveDomainControl(config = {}) {
         emailAuthStatus,
         notes,
     };
+}
+
+/**
+ * Resolve domain control settings from full tenant config, merging deprecated
+ * `domainControl` with split `domainRouting` and `domainBranding` keys.
+ *
+ * Priority:
+ *   domainRouting/domainBranding overrides > domainControl > defaults
+ *
+ * @param {object} [config]
+ * @returns {ReturnType<typeof resolveDomainControl>}
+ */
+export function resolveDomainControlFromConfig(config = {}) {
+    const domainControl = config?.domainControl || {};
+    const domainRouting = config?.domainRouting || {};
+    const domainBranding = config?.domainBranding || {};
+
+    return resolveDomainControl({
+        ...domainControl,
+        appHostname: domainRouting.appHostname || domainControl.appHostname,
+        appOrigin: domainRouting.appOrigin || domainControl.appOrigin,
+        domainStatus: domainRouting.domainStatus || domainControl.domainStatus,
+        sslStatus: domainRouting.sslStatus || domainControl.sslStatus,
+        dnsTarget: domainRouting.dnsTarget || domainControl.dnsTarget,
+        docsUrl: domainBranding.docsUrl || domainControl.docsUrl,
+        helpCenterUrl: domainBranding.helpCenterUrl || domainControl.helpCenterUrl,
+        supportPortalUrl: domainBranding.supportPortalUrl || domainControl.supportPortalUrl,
+        supportEmail: domainBranding.supportEmail || domainControl.supportEmail,
+        statusPageUrl: domainBranding.statusPageUrl || domainControl.statusPageUrl,
+        incidentReportingUrl:
+            domainBranding.incidentReportingUrl || domainControl.incidentReportingUrl,
+        onboardingUrl: domainBranding.onboardingUrl || domainControl.onboardingUrl,
+        sendingDomain: domainBranding.sendingDomain || domainControl.sendingDomain,
+        emailAuthStatus: domainBranding.emailAuthStatus || domainControl.emailAuthStatus,
+        notes: domainBranding.notes || domainControl.notes,
+    });
 }
 
 // ─── DomainRoutingService ─────────────────────────────────────────────────────
@@ -243,10 +285,9 @@ function extractBrandingConfig(domainControl) {
         helpCenterUrl: resolved.helpCenterUrl,
         supportPortalUrl: resolved.supportPortalUrl,
         supportEmail: resolved.supportEmail,
-        statusPageUrl: typeof domainControl?.statusPageUrl === 'string' ? domainControl.statusPageUrl : '',
-        incidentReportingUrl:
-            typeof domainControl?.incidentReportingUrl === 'string' ? domainControl.incidentReportingUrl : '',
-        onboardingUrl: typeof domainControl?.onboardingUrl === 'string' ? domainControl.onboardingUrl : '',
+        statusPageUrl: resolved.statusPageUrl,
+        incidentReportingUrl: resolved.incidentReportingUrl,
+        onboardingUrl: resolved.onboardingUrl,
         sendingDomain: resolved.sendingDomain,
         emailAuthStatus: resolved.emailAuthStatus,
         notes: resolved.notes,
