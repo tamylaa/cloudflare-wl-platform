@@ -362,12 +362,13 @@ export function validateConfig(config) {
     }
   }
 
-  // Webhook publicBaseUrl must not expose a vendor-platform domain
+  // Webhook publicBaseUrl must not expose a vendor-platform domain (security error: partner
+  // end-clients see this domain — leaking it exposes the underlying infrastructure)
   if (config.communications?.webhooks?.publicBaseUrl) {
     const wbUrl = String(config.communications.webhooks.publicBaseUrl).toLowerCase();
     const vendorWebhookPatterns = [/\.workers\.dev/, /\.pages\.dev/, /cloudflare\.com/];
     if (vendorWebhookPatterns.some((re) => re.test(wbUrl))) {
-      warnings.push({
+      errors.push({
         field: 'communications.webhooks.publicBaseUrl',
         message: `publicBaseUrl '${wbUrl}' exposes a vendor-platform domain. Set a white-labeled custom domain for public webhook metadata.`,
       });
@@ -442,13 +443,14 @@ export function validateConfig(config) {
     });
   }
 
-  // billingSupportLabel must not expose a known sub-processor brand (Stripe, Chargebee, etc.)
+  // billingSupportLabel must not expose a known sub-processor brand (security error: this
+  // label surfaces directly in the partner-facing billing portal and invoices)
   if (config.billingReseller?.billingSupportLabel) {
     const bsl = String(config.billingReseller.billingSupportLabel).toLowerCase();
     const processorNames = ['stripe', 'chargebee', 'recurly', 'paddle', 'braintree', 'adyen', 'paypal', 'zuora'];
     const leakedProcessor = processorNames.find((name) => bsl.includes(name));
     if (leakedProcessor) {
-      warnings.push({
+      errors.push({
         field: 'billingReseller.billingSupportLabel',
         message: `billingSupportLabel contains '${leakedProcessor}' which exposes the underlying payment processor brand. Use your partner product name instead.`,
       });
@@ -517,6 +519,7 @@ export function validateConfig(config) {
   }
 
   // White-label login hostname: must not expose a known vendor-platform hostname
+  // (security error: vendor domain on the SSO login page breaks trust chain for partners)
   if (config.authIdentity?.loginHostname) {
     const lh = String(config.authIdentity.loginHostname).toLowerCase().trim();
     const vendorPatterns = [
@@ -530,7 +533,7 @@ export function validateConfig(config) {
     ];
     const exposesVendor = vendorPatterns.some((re) => re.test(lh));
     if (exposesVendor) {
-      warnings.push({
+      errors.push({
         field: 'authIdentity.loginHostname',
         message: `loginHostname '${lh}' exposes a vendor-platform domain. Set a fully white-labeled custom hostname (e.g. login.yourbrand.com).`,
       });

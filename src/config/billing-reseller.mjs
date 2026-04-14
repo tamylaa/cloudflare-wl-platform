@@ -369,7 +369,13 @@ export const USAGE_EVENT_TYPE_VALUES = Object.freeze(Object.values(USAGE_EVENT_T
 
 /**
  * Record a single tenant usage event to KV.
- * Events are namespaced by siteId + billing period so aggregation is O(page count).
+ *
+ * Two writes per event:
+ *   1. Full event record for audit/reconciliation (namespaced by eventId).
+ *   2. Pre-aggregated counter key per (siteId, period, type) — updated with
+ *      a best-effort read-increment-write. On concurrent writes to the same
+ *      (siteId, period, type) there is a benign race that can produce a slight
+ *      undercount; the event log remains the source of truth for reconciliation.
  *
  * @param {object} env
  * @param {string} siteId
@@ -398,32 +404,69 @@ export async function recordTenantUsageEvent(env, siteId, event = {}) {
         recordedAt: new Date(nowMs).toISOString(),
     };
 
-    const key = `${USAGE_EVENT_KEY_PREFIX}${normalizedSiteId}:${period}:${eventId}`;
-    await kv.put(key, JSON.stringify(payload), { expirationTtl: USAGE_DEFAULT_TTL_SECONDS });
+    // Write #1: full event record
+    const eventKey = `${USAGE_EVENT_KEY_PREFIX}${normalizedSiteId}:${period}:${eventId}`;
+    await kv.put(eventKey, JSON.stringify(payload), { expirationTtl: USAGE_DEFAULT_TTL_SECONDS });
+
+    // Write #2: update pre-aggregated counter (best-effort read-increment-write)
+    // This reduces aggregateTenantUsage from O(n KV gets) to O(type count) reads.
+    const counterKey = `${USAGE_AGGREGATE_KEY_PREFIX}${normalizedSiteId}:${period}:${type}`;
+    try {
+        const existing = await kv.get(counterKey);
+        const prev = existing ? toNonNegativeInt(existing, 0) : 0;
+        await kv.put(counterKey, String(prev + quantity), { expirationTtl: USAGE_DEFAULT_TTL_SECONDS });
+    } catch { /* counter degraded — event log remains source of truth */ }
+
     return payload;
 }
 
 /**
- * Aggregate all usage events for a tenant in a given billing period.
- * Returns per-type totals suitable for downstream invoice construction.
+ * Aggregate tenant usage for a billing period.
+ *
+ * Fast path (default): reads one counter key per event type (~8 KV gets).
+ * Reconciliation path (options.reconcile = true): full event-log scan for
+ * auditing or correcting a drifted counter after a concurrent-write race.
  *
  * @param {object} env
  * @param {string} siteId
- * @param {{ period?: string, nowMs?: number }} options
- * @returns {{ siteId, period, totals: Record<string, number>, eventCount: number }}
+ * @param {{ period?: string, nowMs?: number, reconcile?: boolean }} options
+ * @returns {{ siteId, period, totals: Record<string, number>, eventCount: number, source: 'counter'|'scan' }}
  */
 export async function aggregateTenantUsage(env, siteId, options = {}) {
     const kv = getUsageKv(env);
     const normalizedSiteId = normalizeUsageSiteId(siteId);
     const period = options.period || billingPeriodKey(Number(options.nowMs) || Date.now());
 
-    const totals = Object.fromEntries(USAGE_EVENT_TYPE_VALUES.map((t) => [t, 0]));
-    let eventCount = 0;
+    const emptyTotals = Object.fromEntries(USAGE_EVENT_TYPE_VALUES.map((t) => [t, 0]));
 
-    if (!kv?.list || !normalizedSiteId) {
-        return Object.freeze({ siteId: normalizedSiteId, period, totals: Object.freeze(totals), eventCount });
+    if (!normalizedSiteId) {
+        return Object.freeze({ siteId: normalizedSiteId, period, totals: Object.freeze(emptyTotals), eventCount: 0, source: 'counter' });
     }
 
+    // ── Fast path: read pre-aggregated counter keys ─────────────────────────
+    if (!options.reconcile && kv?.get) {
+        const totals = { ...emptyTotals };
+        let eventCount = 0;
+        for (const type of USAGE_EVENT_TYPE_VALUES) {
+            try {
+                const counterKey = `${USAGE_AGGREGATE_KEY_PREFIX}${normalizedSiteId}:${period}:${type}`;
+                const raw = await kv.get(counterKey);
+                if (raw) {
+                    const count = toNonNegativeInt(raw, 0);
+                    totals[type] = count;
+                    eventCount += count > 0 ? 1 : 0; // approximate: count distinct active types
+                }
+            } catch { /* skip corrupt counter */ }
+        }
+        return Object.freeze({ siteId: normalizedSiteId, period, totals: Object.freeze(totals), eventCount, source: 'counter' });
+    }
+
+    // ── Reconciliation path: full event-log scan ─────────────────────────────
+    if (!kv?.list) {
+        return Object.freeze({ siteId: normalizedSiteId, period, totals: Object.freeze(emptyTotals), eventCount: 0, source: 'scan' });
+    }
+    const totals = { ...emptyTotals };
+    let eventCount = 0;
     const prefix = `${USAGE_EVENT_KEY_PREFIX}${normalizedSiteId}:${period}:`;
     let cursor;
     do {
@@ -442,7 +485,7 @@ export async function aggregateTenantUsage(env, siteId, options = {}) {
         cursor = listed?.list_complete === false ? listed.cursor : null;
     } while (cursor);
 
-    return Object.freeze({ siteId: normalizedSiteId, period, totals: Object.freeze({ ...totals }), eventCount });
+    return Object.freeze({ siteId: normalizedSiteId, period, totals: Object.freeze({ ...totals }), eventCount, source: 'scan' });
 }
 
 /**

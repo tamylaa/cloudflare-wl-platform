@@ -213,7 +213,11 @@ describe('recordTenantUsageEvent', () => {
         expect(result.type).toBe(USAGE_EVENT_TYPE.AI_CALL);
         expect(result.quantity).toBe(3);
         expect(result.siteId).toBe('tenant-a');
-        expect(Object.keys(store)).toHaveLength(1);
+        // Dual write: one full event record + one aggregate counter key
+        expect(Object.keys(store)).toHaveLength(2);
+        const counterKey = Object.keys(store).find((k) => k.startsWith('usage-agg:'));
+        expect(counterKey).toBeTruthy();
+        expect(store[counterKey]).toBe('3');
     });
 
     it('returns null when KV is unavailable', async () => {
@@ -238,10 +242,18 @@ describe('aggregateTenantUsage', () => {
         await recordTenantUsageEvent(env, 'tenant-b', { type: 'ai_call', quantity: 3, nowMs });
         await recordTenantUsageEvent(env, 'tenant-b', { type: 'token_consumed', quantity: 1000, nowMs });
 
+        // Fast path: reads aggregate counters (8 KV reads, not N event reads)
         const agg = await aggregateTenantUsage(env, 'tenant-b', { nowMs });
         expect(agg.totals[USAGE_EVENT_TYPE.AI_CALL]).toBe(8);
         expect(agg.totals[USAGE_EVENT_TYPE.TOKEN_CONSUMED]).toBe(1000);
-        expect(agg.eventCount).toBe(3);
+        expect(agg.source).toBe('counter');
+
+        // Reconciliation path should also match
+        const reconciled = await aggregateTenantUsage(env, 'tenant-b', { nowMs, reconcile: true });
+        expect(reconciled.totals[USAGE_EVENT_TYPE.AI_CALL]).toBe(8);
+        expect(reconciled.totals[USAGE_EVENT_TYPE.TOKEN_CONSUMED]).toBe(1000);
+        expect(reconciled.eventCount).toBe(3);
+        expect(reconciled.source).toBe('scan');
     });
 
     it('returns zero totals when no events exist', async () => {

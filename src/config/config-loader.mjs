@@ -21,7 +21,7 @@
  *   const config = loadConfigFromEnv(env);
  */
 
-import { customerConfigDefaults, mergeWithDefaults } from './customer-config.schema.mjs';
+import { customerConfigDefaults, mergeWithDefaults, migrateConfig } from './customer-config.schema.mjs';
 import { validateConfig, assertValidConfig } from './config-validator.mjs';
 import { buildConfigFromEnv } from './env-adapter.mjs';
 import { TTL } from './ttl.mjs';
@@ -547,6 +547,12 @@ export async function loadConfig(env, siteId, options = {}) {
   }
 
   storedConfig = enforceConfigSiteId(storedConfig, normalizedSiteId);
+
+  // 2b. Migrate stored config to current schema version (idempotent if already current)
+  const migration = migrateConfig(storedConfig);
+  if (migration.didMigrate) {
+    storedConfig = migration.config;
+  }
 
   // 3. Merge with defaults
   const merged = mergeWithDefaults(storedConfig);

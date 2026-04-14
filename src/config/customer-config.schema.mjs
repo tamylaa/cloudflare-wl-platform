@@ -52,7 +52,19 @@ import {
   PWA_ORIENTATION,
 } from './mobile.mjs';
 
+// ─── Schema Version ──────────────────────────────────────────────────────────
+
+/**
+ * Monotonically increasing integer schema version.
+ * Increment this whenever a field is renamed, removed, or a new required field
+ * is added. migrateConfig() must handle every version transition.
+ */
+export const SCHEMA_VERSION = 1;
+
 export const customerConfigDefaults = Object.freeze({
+  // ── Schema Version ────────────────────────────────────────────────
+  schemaVersion: SCHEMA_VERSION,
+
   // ── Site Identity ──────────────────────────────────────────────────
   // Who is this customer? What domain are we analyzing?
   site: {
@@ -623,4 +635,49 @@ export function mergeWithDefaults(customerConfig) {
   }
 
   return merged;
+}
+
+// ─── Schema Migration ──────────────────────────────────────────────────────────
+
+/**
+ * Migrate a stored config to a target schema version.
+ *
+ * Each case block handles the transition FROM that version TO the next.
+ * A config with no schemaVersion is treated as version 0 (pre-versioning).
+ * The function is idempotent: migrating an already-current config is a no-op.
+ *
+ * @param {object} config       - Raw config loaded from KV (may have old schema)
+ * @param {number} [targetVersion] - Target version (defaults to SCHEMA_VERSION)
+ * @returns {{ config: object, migratedFrom: number, migratedTo: number, steps: string[] }}
+ */
+export function migrateConfig(config = {}, targetVersion = SCHEMA_VERSION) {
+  let current = config && typeof config === 'object' ? { ...config } : {};
+  const fromVersion = typeof current.schemaVersion === 'number' ? current.schemaVersion : 0;
+  const steps = [];
+
+  let version = fromVersion;
+
+  while (version < targetVersion) {
+    switch (version) {
+      case 0:
+        // v0 → v1: stamp schemaVersion field; no field renames in this transition
+        current.schemaVersion = 1;
+        steps.push('v0→v1: stamped schemaVersion=1');
+        break;
+      // Future: add case 1, case 2, etc. here
+      default:
+        // Unknown intermediate version — break to avoid infinite loop
+        version = targetVersion;
+        continue;
+    }
+    version++;
+  }
+
+  return {
+    config: current,
+    migratedFrom: fromVersion,
+    migratedTo: version,
+    steps,
+    didMigrate: fromVersion !== version,
+  };
 }

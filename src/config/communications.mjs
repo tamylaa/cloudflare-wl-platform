@@ -249,7 +249,8 @@ export function resolveInAppMessagePolicy(config = {}) {
 
 // ─── Prompt 3: Webhook Payload Sanitization ───────────────────────────────────
 
-// Keys that should never appear in a public webhook payload when hideVendorMetadata=true
+// Pass 1: Keys that should never appear in a public webhook payload.
+// Stripped unconditionally when hideVendorMetadata=true — regardless of value.
 const VENDOR_METADATA_KEYS = new Set([
     'workerId', 'workerVersion', 'cfRay', 'cfRequestId',
     'platformVersion', 'internalTraceId', 'deploymentId',
@@ -257,13 +258,29 @@ const VENDOR_METADATA_KEYS = new Set([
     '_platform', '_vendor', '_internal',
 ]);
 
-// Regex patterns for vendor-identifiable values (Cloudflare Ray IDs, workers.dev URLs, etc.)
+// Pass 2: Value-pattern matching is scoped to these known trace/meta key suffixes only.
+// This prevents accidentally dropping legitimate business data fields whose values
+// happen to contain the word "cloudflare" or match a Ray ID pattern.
+const VENDOR_VALUE_SCAN_KEY_SUFFIXES = new Set([
+    'source', 'origin', 'provider', 'host', 'hostname', 'endpoint', 'url',
+    'traceId', 'rayId', 'requestId', 'correlationId', 'spanId',
+    'via', 'server', 'proxy', 'gateway', 'platform', 'runtime', 'agent',
+]);
+
+// Vendor-identifiable value patterns (used only on keys whose suffix is in the scan set)
 const VENDOR_VALUE_PATTERNS = [
     /\.workers\.dev/i,
     /\.pages\.dev/i,
     /cloudflare/i,
-    /[0-9a-f]{16}-[0-9a-f]{16}/,  // Cloudflare Ray ID pattern
+    /[0-9a-f]{16}-[0-9a-f]{16}/, // Cloudflare Ray ID pattern
 ];
+
+function isScanCandidateKey(key = '') {
+    const lower = String(key).toLowerCase();
+    // Match exact key or any key ending with one of the scan suffixes (camelCase or snake_case)
+    return VENDOR_VALUE_SCAN_KEY_SUFFIXES.has(lower) ||
+        [...VENDOR_VALUE_SCAN_KEY_SUFFIXES].some((s) => lower.endsWith(s.toLowerCase()) || lower.endsWith(`_${s.toLowerCase()}`));
+}
 
 function isVendorValue(value) {
     if (typeof value !== 'string') return false;
@@ -278,11 +295,12 @@ function sanitizePayloadObject(obj, hideVendorMetadata, depth = 0) {
 
     const result = {};
     for (const [key, value] of Object.entries(obj)) {
-        // Drop keys in the vendor metadata denylist
+        // Pass 1: strip keys in the vendor metadata denylist unconditionally
         if (hideVendorMetadata && VENDOR_METADATA_KEYS.has(key)) continue;
 
-        // Drop values that contain vendor platform identifiers
-        if (hideVendorMetadata && isVendorValue(value)) continue;
+        // Pass 2: strip values matching vendor patterns ONLY on trace/meta candidate keys
+        // (prevents collateral damage to legitimate business fields)
+        if (hideVendorMetadata && isScanCandidateKey(key) && isVendorValue(value)) continue;
 
         if (value && typeof value === 'object') {
             result[key] = sanitizePayloadObject(value, hideVendorMetadata, depth + 1);

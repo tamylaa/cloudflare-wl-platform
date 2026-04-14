@@ -253,3 +253,92 @@ export function evaluateTenantUsageAgainstPolicy(usage = {}, policyOrConfig = {}
     }),
   };
 }
+
+// ─── KV-backed Durable Rate Limit ────────────────────────────────────────────
+
+const KV_RATE_LIMIT_PREFIX = 'ratelimit:';
+const KV_RATE_LIMIT_TTL_BUFFER_S = 5; // extra seconds so the KV key outlives the window
+
+/**
+ * KV-backed rate-limit enforcement.
+ *
+ * Unlike consumeTenantRateLimit (in-process Map), this helper persists counters
+ * in Cloudflare KV so requests distributed across multiple Worker isolates share
+ * the same window counter. It uses a best-effort read-increment-write pattern;
+ * there is no perfect atomic guarantee without a Durable Object, but it removes
+ * the single-isolate blindspot.
+ *
+ * Falls back to the in-process limiter when KV is unavailable so the consuming
+ * app never hard-fails on a missing binding.
+ *
+ * @param {object} env         - Worker env with KV_CONFIG or KV_ANALYTICS binding
+ * @param {string} siteId      - Tenant identifier
+ * @param {string} bucket      - Rate-limit bucket name (matches TENANT_RATE_LIMIT_DEFAULTS key)
+ * @param {object} [options]   - { config, policy, nowMs, windowMs, limit }
+ * @returns {Promise<{ allowed: boolean, used: number, remaining: number|null, retryAfterMs: number, resetAtMs: number, source: 'kv'|'process' }>}
+ */
+export async function consumeTenantRateLimitKv(env, siteId, bucket, options = {}) {
+  const kv = env?.KV_CONFIG || env?.KV_ANALYTICS || null;
+
+  const policy = options.policy || resolveTenantQuotaPolicy(options.config || {});
+  const limit = toNonNegativeInteger(
+    options.limit ?? policy?.rateLimits?.[bucket],
+    TENANT_RATE_LIMIT_DEFAULTS[bucket] || 0
+  );
+  const windowMs = Math.max(
+    1,
+    Number(options.windowMs || policy?.windowsMs?.[bucket] || TENANT_RATE_LIMIT_WINDOWS_MS[bucket] || 60_000)
+  );
+  const nowMs = Number(options.nowMs) || Date.now();
+
+  // Fall back to in-process limiter when KV unavailable
+  if (!kv?.get || !kv?.put) {
+    const result = consumeTenantRateLimit({ siteId, bucket, limit, windowMs, nowMs });
+    return { ...result, source: 'process' };
+  }
+
+  const normalizedSiteId = normalizeSiteId(siteId);
+  if (!normalizedSiteId || !bucket) {
+    const result = consumeTenantRateLimit({ siteId, bucket, limit, windowMs, nowMs });
+    return { ...result, source: 'process' };
+  }
+
+  if (limit <= 0) {
+    const { windowStartMs, windowEndMs, resetAtMs } = computeRateLimitWindow(nowMs, windowMs);
+    return { allowed: true, unlimited: true, siteId: normalizedSiteId, bucket, limit, used: 0, remaining: null, retryAfterMs: 0, windowStartMs, windowEndMs, resetAtMs, source: 'kv' };
+  }
+
+  const { windowStartMs, windowEndMs, resetAtMs } = computeRateLimitWindow(nowMs, windowMs);
+  const kvKey = `${KV_RATE_LIMIT_PREFIX}${normalizedSiteId}:${bucket}:${windowStartMs}`;
+  const ttlSeconds = Math.ceil(windowMs / 1000) + KV_RATE_LIMIT_TTL_BUFFER_S;
+
+  let used = 1;
+  try {
+    const existing = await kv.get(kvKey);
+    used = (existing ? toNonNegativeInteger(existing, 0) : 0) + 1;
+    await kv.put(kvKey, String(used), { expirationTtl: ttlSeconds });
+  } catch {
+    // KV call failed mid-flight — degrade to in-process for this request
+    const result = consumeTenantRateLimit({ siteId, bucket, limit, windowMs, nowMs });
+    return { ...result, source: 'process' };
+  }
+
+  const allowed = used <= limit;
+  const remaining = Math.max(limit - used, 0);
+  const retryAfterMs = allowed ? 0 : Math.max(windowEndMs - nowMs, 1);
+
+  return {
+    allowed,
+    unlimited: false,
+    siteId: normalizedSiteId,
+    bucket,
+    limit,
+    used,
+    remaining,
+    retryAfterMs,
+    windowStartMs,
+    windowEndMs,
+    resetAtMs,
+    source: 'kv',
+  };
+}
