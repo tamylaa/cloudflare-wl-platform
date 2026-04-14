@@ -44,6 +44,12 @@ import {
   PWA_DISPLAY_MODE_VALUES,
   PWA_ORIENTATION_VALUES,
 } from './mobile.mjs';
+import {
+  API_DOCS_MODE_VALUES,
+  EMBED_MODE_VALUES,
+  INTEGRATION_VISIBILITY_VALUES,
+  WEBHOOK_RETRY_STRATEGY_VALUES,
+} from './api-integration.mjs';
 
 // ─── Field-Level Validators ─────────────────────────────────────────────────
 
@@ -66,6 +72,10 @@ const VALID_MOBILE_APP_PLATFORMS = MOBILE_APP_PLATFORM_VALUES;
 const VALID_PWA_DISPLAY_MODES = PWA_DISPLAY_MODE_VALUES;
 const VALID_PWA_ORIENTATIONS = PWA_ORIENTATION_VALUES;
 const VALID_APPLE_STATUS_BAR_STYLES = APPLE_STATUS_BAR_STYLE_VALUES;
+const VALID_API_DOCS_MODES = API_DOCS_MODE_VALUES;
+const VALID_EMBED_MODES = EMBED_MODE_VALUES;
+const VALID_INTEGRATION_VISIBILITY = INTEGRATION_VISIBILITY_VALUES;
+const VALID_WEBHOOK_RETRY_STRATEGIES = WEBHOOK_RETRY_STRATEGY_VALUES;
 const VALID_AUTH_SSO_MODES = AUTH_SSO_MODE_VALUES;
 const VALID_MFA_ENFORCEMENT_MODES = MFA_ENFORCEMENT_MODE_VALUES;
 const VALID_SESSION_COOKIE_SAME_SITE = AUTH_SESSION_SAME_SITE_VALUES;
@@ -573,7 +583,7 @@ export function validateConfig(config) {
     });
   }
 
-  // ── Mobile white-label checks ────────────────────────────────────
+  // ── Mobile white-label checks ────────────────────────────────
 
   // Vendor terms must not appear in partner-visible mobile surfaces
   const MOBILE_VENDOR_TERMS = ['cloudflare', 'workers.dev', 'pages.dev', 'anthropic', 'claude'];
@@ -641,6 +651,101 @@ export function validateConfig(config) {
     warnings.push({
       field: 'mobile.pushVapidPublicKey',
       message: 'Push notifications are enabled but mobile.pushVapidPublicKey (Wrangler secret name) is not set. Web push requires a VAPID key pair scoped to the partner domain.',
+    });
+  }
+
+  // ── API & Integration Layer checks ───────────────────────────────
+
+  // Q1: customDocsUrl must not expose vendor-platform domains
+  const API_VENDOR_DOCS_PATTERNS = [/\.workers\.dev/, /\.pages\.dev/, /cloudflare\.com/, /readme\.io/];
+  const customDocsUrl = config.apiIntegration?.customDocsUrl;
+  if (customDocsUrl) {
+    const lower = String(customDocsUrl).toLowerCase();
+    for (const pattern of API_VENDOR_DOCS_PATTERNS) {
+      if (pattern.test(lower)) {
+        errors.push({
+          field: 'apiIntegration.customDocsUrl',
+          message: `apiIntegration.customDocsUrl '${customDocsUrl}' exposes a vendor-platform domain. Docs URLs must use a partner-owned domain (e.g. docs.partnerbrand.com) to maintain white-label independence.`,
+        });
+        break;
+      }
+    }
+  }
+
+  // Q1: docsProductName must not contain vendor brand terms when set
+  const API_VENDOR_BRAND_TERMS = ['cloudflare', 'anthropic', 'clodo', 'workers', 'claude'];
+  const docsProductName = config.apiIntegration?.docsProductName;
+  if (docsProductName) {
+    const lower = String(docsProductName).toLowerCase();
+    const term = API_VENDOR_BRAND_TERMS.find((t) => lower.includes(t));
+    if (term) {
+      errors.push({
+        field: 'apiIntegration.docsProductName',
+        message: `apiIntegration.docsProductName contains vendor brand term '${term}' — docs product name must use the partner's brand.`,
+      });
+    }
+  }
+
+  // Q3: webhookTargets entries must have https:// URLs
+  const webhookTargets = config.apiIntegration?.webhookTargets;
+  if (Array.isArray(webhookTargets)) {
+    for (let i = 0; i < webhookTargets.length; i++) {
+      const t = webhookTargets[i];
+      if (!String(t?.url || '').startsWith('https://')) {
+        errors.push({
+          field: `apiIntegration.webhookTargets[${i}].url`,
+          message: `Webhook delivery target url '${t?.url}' must be an HTTPS endpoint. Non-TLS delivery targets leak event payload data in transit.`,
+        });
+      }
+      if (t?.retryStrategy !== undefined && !VALID_WEBHOOK_RETRY_STRATEGIES.includes(t.retryStrategy)) {
+        errors.push({
+          field: `apiIntegration.webhookTargets[${i}].retryStrategy`,
+          message: `Invalid retryStrategy '${t.retryStrategy}' — must be one of: ${VALID_WEBHOOK_RETRY_STRATEGIES.join(', ')}.`,
+        });
+      }
+    }
+  }
+
+  // Q4: integrationCatalog visibility values must use valid enum
+  const integrationCatalog = config.apiIntegration?.integrationCatalog;
+  if (integrationCatalog && typeof integrationCatalog === 'object') {
+    for (const [id, entry] of Object.entries(integrationCatalog)) {
+      if (entry?.visibility !== undefined && !VALID_INTEGRATION_VISIBILITY.includes(entry.visibility)) {
+        errors.push({
+          field: `apiIntegration.integrationCatalog.${id}.visibility`,
+          message: `Invalid visibility '${entry.visibility}' for integration '${id}' — must be one of: ${VALID_INTEGRATION_VISIBILITY.join(', ')}.`,
+        });
+      }
+    }
+  }
+
+  // Q5: allowedEmbedOrigins must not contain naked wildcards or vendor domains
+  const allowedEmbedOrigins = config.embed?.allowedEmbedOrigins;
+  if (Array.isArray(allowedEmbedOrigins)) {
+    for (const origin of allowedEmbedOrigins) {
+      const str = String(origin);
+      if (str === '*') {
+        errors.push({
+          field: 'embed.allowedEmbedOrigins',
+          message: "embed.allowedEmbedOrigins contains a bare '*' wildcard — this allows any origin to embed the partner surface, negating white-label branding enforcement. Use specific origin strings or 'https://*.partnerdomain.com'.",
+        });
+      }
+      const lowerOrigin = str.toLowerCase();
+      const isVendor = API_VENDOR_DOCS_PATTERNS.some((re) => re.test(lowerOrigin));
+      if (isVendor) {
+        errors.push({
+          field: 'embed.allowedEmbedOrigins',
+          message: `embed.allowedEmbedOrigins entry '${origin}' exposes a vendor-platform domain — embed origins must be partner-owned.`,
+        });
+      }
+    }
+  }
+
+  // Q5: embedMode 'any' is a warning (only safe in controlled intranet contexts)
+  if (config.apiIntegration?.embedMode === 'any') {
+    warnings.push({
+      field: 'apiIntegration.embedMode',
+      message: "apiIntegration.embedMode is 'any' — this permits any origin to embed this surface. Restrict to 'allowlist' in production to enforce white-label branding inside embeds.",
     });
   }
 
@@ -872,6 +977,16 @@ export function validateConfig(config) {
       field: 'mobile.appleWebAppStatusBarStyle',
       value: config.mobile?.appleWebAppStatusBarStyle,
       allowed: VALID_APPLE_STATUS_BAR_STYLES,
+    },
+    {
+      field: 'apiIntegration.docsMode',
+      value: config.apiIntegration?.docsMode,
+      allowed: VALID_API_DOCS_MODES,
+    },
+    {
+      field: 'apiIntegration.embedMode',
+      value: config.apiIntegration?.embedMode,
+      allowed: VALID_EMBED_MODES,
     },
   ];
 

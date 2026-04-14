@@ -51,6 +51,12 @@ import {
   PWA_DISPLAY_MODE,
   PWA_ORIENTATION,
 } from './mobile.mjs';
+import {
+  API_DOCS_MODE,
+  EMBED_MODE,
+  INTEGRATION_VISIBILITY,
+  WEBHOOK_RETRY_STRATEGY,
+} from './api-integration.mjs';
 
 // ─── Schema Version ──────────────────────────────────────────────────────────
 
@@ -476,7 +482,42 @@ export const customerConfigDefaults = Object.freeze({
   embed: {
     allowedEmbedOrigins: [], // e.g. ['https://app.partner.com', 'https://*.acme.com']
   },
+  // ── API & Integration Layer ────────────────────────────────────
+  // Q1 — white-labeled API documentation identity
+  // Q2 — per-tenant quota enforcement (quota fields live in quotas.*)
+  // Q3 — webhook delivery targets + custom event schema registry
+  // Q4 — partner-curated integration marketplace
+  // Q5 — iFrame embed mode extension (allowedEmbedOrigins above; mode here)
+  apiIntegration: {
+    // Q1: Docs identity
+    docsMode: API_DOCS_MODE.DISABLED,    // 'disabled' | 'custom' | 'embedded' | 'platform'
+    customDocsUrl: '',                   // e.g. 'https://docs.partnerbrand.com'
+    docsProductName: '',                 // Product name shown in docs (fallback: branding.productName)
 
+    // Q3: Webhook delivery targets — array of endpoint registrations
+    // Each entry: { id, url, events[], signingKeySecret, retryStrategy, retryMaxAttempts, enabled }
+    webhookTargets: [],
+
+    // Q3: Custom event type registrations (additive on top of canonical platform events)
+    // Each entry: { name, description, schema }
+    customEventTypes: [],
+
+    // Q3: Webhook namespace override (default: derived from communications.webhooks.eventNamespace)
+    webhookNamespace: '',
+
+    // Q4: Integration catalog visibility overrides
+    // Map of { [integrationId]: { visibility, displayName, description } }
+    integrationCatalog: {},
+
+    // Q4: Partner-added custom integrations not in the platform registry
+    // Each entry: { id, name, category, visibility, description }
+    customIntegrations: [],
+
+    // Q5: Embed mode
+    embedMode: EMBED_MODE.DISABLED,      // 'disabled' | 'allowlist' | 'any'
+
+    notes: '',
+  },
   // ── Operations & SLA ──────────────────────────────────────────────
   // Per-tenant SLA commitments, environment classification, and
   // partner-visible incident reporting config. Never reference vendor
