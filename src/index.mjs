@@ -17,3 +17,21 @@ export * from './tenancy/tenant-lifecycle.mjs'
 export * from './guards/brand-scatter-guard.mjs'
 export * from './config/billing-reseller.mjs'
 export { SCHEMA_VERSION, migrateConfig } from './config/customer-config.schema.mjs'
+export {
+  APPLE_STATUS_BAR_STYLE,
+  APPLE_STATUS_BAR_STYLE_VALUES,
+  MOBILE_APP_PLATFORM,
+  MOBILE_APP_PLATFORM_VALUES,
+  PWA_DISPLAY_MODE,
+  PWA_DISPLAY_MODE_VALUES,
+  PWA_ORIENTATION,
+  PWA_ORIENTATION_VALUES,
+  DATA_RESIDENCY_REGION,
+  DATA_RESIDENCY_REGION_VALUES,
+  assertMobileWhiteLabel,
+  buildMobileMetaTags,
+  buildPwaManifest,
+  checkMobileVendorLeak,
+  resolveMobileAppOffering,
+  resolveMobileAssetDescriptor,
+} from './config/mobile.mjs'

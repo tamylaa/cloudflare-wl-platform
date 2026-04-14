@@ -37,7 +37,13 @@ import {
   WEBHOOK_EVENT_NAME_MODE_VALUES,
 } from './communications.mjs';
 import { enforceBrandingSecurityPolicy } from './branding-security-policy.mjs';
-import { DATA_RESIDENCY_REGION_VALUES } from './mobile.mjs';
+import {
+  APPLE_STATUS_BAR_STYLE_VALUES,
+  DATA_RESIDENCY_REGION_VALUES,
+  MOBILE_APP_PLATFORM_VALUES,
+  PWA_DISPLAY_MODE_VALUES,
+  PWA_ORIENTATION_VALUES,
+} from './mobile.mjs';
 
 // ─── Field-Level Validators ─────────────────────────────────────────────────
 
@@ -56,6 +62,10 @@ const VALID_CROSS_TENANT_LEARNING_MODES = ['disabled', 'anonymized_aggregates', 
 const VALID_OPERATIONS_ENVIRONMENTS = ['production', 'sandbox'];
 const VALID_AUDIT_LOG_SIEM_FORMATS = ['jsonl', 'cef'];
 const VALID_DATA_RESIDENCY_REGIONS = DATA_RESIDENCY_REGION_VALUES;
+const VALID_MOBILE_APP_PLATFORMS = MOBILE_APP_PLATFORM_VALUES;
+const VALID_PWA_DISPLAY_MODES = PWA_DISPLAY_MODE_VALUES;
+const VALID_PWA_ORIENTATIONS = PWA_ORIENTATION_VALUES;
+const VALID_APPLE_STATUS_BAR_STYLES = APPLE_STATUS_BAR_STYLE_VALUES;
 const VALID_AUTH_SSO_MODES = AUTH_SSO_MODE_VALUES;
 const VALID_MFA_ENFORCEMENT_MODES = MFA_ENFORCEMENT_MODE_VALUES;
 const VALID_SESSION_COOKIE_SAME_SITE = AUTH_SESSION_SAME_SITE_VALUES;
@@ -563,6 +573,77 @@ export function validateConfig(config) {
     });
   }
 
+  // ── Mobile white-label checks ────────────────────────────────────
+
+  // Vendor terms must not appear in partner-visible mobile surfaces
+  const MOBILE_VENDOR_TERMS = ['cloudflare', 'workers.dev', 'pages.dev', 'anthropic', 'claude'];
+  const mobileSurfaceFields = [
+    ['mobile.pwaName', config.mobile?.pwaName],
+    ['mobile.pwaShortName', config.mobile?.pwaShortName],
+    ['mobile.appStoreName', config.mobile?.appStoreName],
+    ['mobile.appStoreDeveloper', config.mobile?.appStoreDeveloper],
+    ['mobile.pushSenderName', config.mobile?.pushSenderName],
+  ];
+  for (const [field, value] of mobileSurfaceFields) {
+    if (value) {
+      const lower = String(value).toLowerCase();
+      const term = MOBILE_VENDOR_TERMS.find((t) => lower.includes(t));
+      if (term) {
+        errors.push({
+          field,
+          message: `'${field}' contains vendor term '${term}' — partner-facing mobile surfaces must use the partner brand name, not the platform vendor`,
+        });
+      }
+    }
+  }
+
+  // PWA completeness: when pwaEnabled, key assets must be set
+  if (config.mobile?.pwaEnabled) {
+    if (!config.mobile?.pwaName) {
+      warnings.push({
+        field: 'mobile.pwaName',
+        message: 'PWA is enabled but mobile.pwaName is not set — the install prompt will show the raw productName or an empty title.',
+      });
+    }
+    if (!config.mobile?.pwaIconUrl192) {
+      warnings.push({
+        field: 'mobile.pwaIconUrl192',
+        message: 'PWA is enabled but mobile.pwaIconUrl192 is not set — partner-branded 192×192 icon required for home-screen installs.',
+      });
+    }
+    if (!config.mobile?.pwaIconUrl512) {
+      warnings.push({
+        field: 'mobile.pwaIconUrl512',
+        message: 'PWA is enabled but mobile.pwaIconUrl512 is not set — partner-branded 512×512 maskable icon required.',
+      });
+    }
+  }
+
+  // Native app store: developer account must be partner's own
+  const nativePlatforms = ['native-ios', 'native-android', 'cross-platform'];
+  if (config.mobile?.platform && nativePlatforms.includes(config.mobile.platform)) {
+    if (!config.mobile?.appStoreDeveloper) {
+      warnings.push({
+        field: 'mobile.appStoreDeveloper',
+        message: "Native platform configured but appStoreDeveloper is not set. App store listings must be published under the partner's own Apple Developer / Google Play account.",
+      });
+    }
+    if (!config.mobile?.appStoreName) {
+      warnings.push({
+        field: 'mobile.appStoreName',
+        message: 'Native platform configured but appStoreName is not set — the app store listing name must reflect the partner brand.',
+      });
+    }
+  }
+
+  // Push VAPID key should be configured when push is enabled
+  if (config.communications?.push?.enabled && !config.mobile?.pushVapidPublicKey) {
+    warnings.push({
+      field: 'mobile.pushVapidPublicKey',
+      message: 'Push notifications are enabled but mobile.pushVapidPublicKey (Wrangler secret name) is not set. Web push requires a VAPID key pair scoped to the partner domain.',
+    });
+  }
+
   const brandingPolicy = enforceBrandingSecurityPolicy(config.branding || {}, { mode: 'config' });
   for (const finding of [...brandingPolicy.errors, ...brandingPolicy.warnings]) {
     const fieldPath = finding.field ? `branding.${finding.field}` : 'branding';
@@ -771,6 +852,26 @@ export function validateConfig(config) {
       field: 'pipeline.pagespeedStrategy',
       value: config.pipeline?.pagespeedStrategy,
       allowed: VALID_PAGESPEED_STRATEGIES,
+    },
+    {
+      field: 'mobile.platform',
+      value: config.mobile?.platform,
+      allowed: VALID_MOBILE_APP_PLATFORMS,
+    },
+    {
+      field: 'mobile.pwaDisplayMode',
+      value: config.mobile?.pwaDisplayMode,
+      allowed: VALID_PWA_DISPLAY_MODES,
+    },
+    {
+      field: 'mobile.pwaOrientation',
+      value: config.mobile?.pwaOrientation,
+      allowed: VALID_PWA_ORIENTATIONS,
+    },
+    {
+      field: 'mobile.appleWebAppStatusBarStyle',
+      value: config.mobile?.appleWebAppStatusBarStyle,
+      allowed: VALID_APPLE_STATUS_BAR_STYLES,
     },
   ];
 
