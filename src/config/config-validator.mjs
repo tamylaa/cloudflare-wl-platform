@@ -56,6 +56,11 @@ import {
   SLA_TIER_VALUES,
   SUPPORT_SYSTEM_VALUES,
 } from './partner-ops.mjs';
+import {
+  AUDIT_LOG_FORMAT_VALUES,
+  RESIDENCY_ENFORCEMENT_VALUES,
+  SECURITY_EVIDENCE_ACCESS_VALUES,
+} from './compliance.mjs';
 
 // ─── Field-Level Validators ─────────────────────────────────────────────────
 
@@ -86,6 +91,9 @@ const VALID_PARTNER_ENVS = PARTNER_ENV_VALUES;
 const VALID_SLA_TIERS = SLA_TIER_VALUES;
 const VALID_SUPPORT_SYSTEMS = SUPPORT_SYSTEM_VALUES;
 const VALID_PARTNER_DOCS_MODES = PARTNER_DOCS_MODE_VALUES;
+const VALID_AUDIT_LOG_SIEM_FORMATS_COMPLIANCE = AUDIT_LOG_FORMAT_VALUES;
+const VALID_RESIDENCY_ENFORCEMENT_LEVELS = RESIDENCY_ENFORCEMENT_VALUES;
+const VALID_SECURITY_EVIDENCE_ACCESS_LEVELS = SECURITY_EVIDENCE_ACCESS_VALUES;
 const VALID_AUTH_SSO_MODES = AUTH_SSO_MODE_VALUES;
 const VALID_MFA_ENFORCEMENT_MODES = MFA_ENFORCEMENT_MODE_VALUES;
 const VALID_SESSION_COOKIE_SAME_SITE = AUTH_SESSION_SAME_SITE_VALUES;
@@ -850,6 +858,129 @@ export function validateConfig(config) {
       field: 'partnerOps.partnerDocsUrl',
       message: `partnerOps.partnerDocsUrl '${config.partnerOps.partnerDocsUrl}' exposes a vendor-platform domain. Partner documentation must be published on a partner-owned domain.`,
     });
+  }
+
+  // ── Compliance & Data Residency checks ────────────────────────
+  const COMPLIANCE_VENDOR_URL_PATTERNS = [
+    /\.workers\.dev/, /^https?:\/\/workers\.dev/,
+    /\.pages\.dev/, /^https?:\/\/pages\.dev/,
+    /cloudflare\.com/, /clodo\.io/,
+    /readme\.io/, /atlassian\.com/,
+  ];
+  function isComplianceVendorUrl(url) {
+    if (!url) return false;
+    const lower = String(url).toLowerCase();
+    return COMPLIANCE_VENDOR_URL_PATTERNS.some((re) => re.test(lower));
+  }
+  const COMPLIANCE_VENDOR_TERMS = ['cloudflare', 'workers', 'clodo', 'anthropic', 'claude'];
+
+  // Q1: dataResidencyEnforcementLevel must be a known value
+  if (
+    config.compliance?.dataResidencyEnforcementLevel &&
+    !VALID_RESIDENCY_ENFORCEMENT_LEVELS.includes(config.compliance.dataResidencyEnforcementLevel)
+  ) {
+    errors.push({
+      field: 'compliance.dataResidencyEnforcementLevel',
+      message: `compliance.dataResidencyEnforcementLevel '${config.compliance.dataResidencyEnforcementLevel}' is not a known value. Allowed: ${VALID_RESIDENCY_ENFORCEMENT_LEVELS.join(', ')}.`,
+    });
+  }
+
+  // Q1: specific region elected but enforcement not confirmed
+  if (
+    config.compliance?.dataResidencyRegion &&
+    config.compliance.dataResidencyRegion !== 'global' &&
+    !config.compliance?.dataResidencyEnforced
+  ) {
+    warnings.push({
+      field: 'compliance.dataResidencyEnforced',
+      message: `compliance.dataResidencyRegion is '${config.compliance.dataResidencyRegion}' but dataResidencyEnforced is false — infrastructure enforcement has not been confirmed. Set dataResidencyEnforced=true only after obtaining written confirmation from the platform operator.`,
+    });
+  }
+
+  // Q2: dpaUrl must not be a vendor-platform domain
+  if (config.compliance?.dpaUrl && isComplianceVendorUrl(config.compliance.dpaUrl)) {
+    errors.push({
+      field: 'compliance.dpaUrl',
+      message: `compliance.dpaUrl '${config.compliance.dpaUrl}' exposes a vendor-platform domain. DPA URLs must be hosted on the partner's own domain so end clients never see vendor infrastructure.`,
+    });
+  }
+
+  // Q2: privacyPolicyUrl must not be a vendor-platform domain
+  if (config.compliance?.privacyPolicyUrl && isComplianceVendorUrl(config.compliance.privacyPolicyUrl)) {
+    errors.push({
+      field: 'compliance.privacyPolicyUrl',
+      message: `compliance.privacyPolicyUrl '${config.compliance.privacyPolicyUrl}' exposes a vendor-platform domain. The privacy policy URL must be on the partner's own domain.`,
+    });
+  }
+
+  // Q3: auditLogSiemFormat must be a known value (enum check aliases)
+  // (also covered in enumChecks array — belt-and-suspenders check only for new field name)
+
+  // Q3: audit log export enabled but no delivery target
+  if (
+    (config.compliance?.auditLogExportEnabled || config.compliance?.auditLogExportEndpointEnabled) &&
+    !config.compliance?.auditLogWebhookUrl &&
+    !config.compliance?.auditLogExportS3Bucket &&
+    !config.compliance?.auditLogExportBlobContainer
+  ) {
+    warnings.push({
+      field: 'compliance.auditLogWebhookUrl',
+      message: 'Audit log export is enabled but no delivery target is configured (auditLogWebhookUrl / auditLogExportS3Bucket / auditLogExportBlobContainer). Logs will be accumulated but not delivered.',
+    });
+  }
+
+  // Q3: audit webhook URL must not be a vendor domain
+  if (config.compliance?.auditLogWebhookUrl && isComplianceVendorUrl(config.compliance.auditLogWebhookUrl)) {
+    errors.push({
+      field: 'compliance.auditLogWebhookUrl',
+      message: `compliance.auditLogWebhookUrl '${config.compliance.auditLogWebhookUrl}' exposes a vendor-platform domain. Audit log webhooks must target the partner's own SIEM endpoint.`,
+    });
+  }
+
+  // Q3: retention below recommended minimum
+  if (
+    typeof config.compliance?.auditLogRetentionDays === 'number' &&
+    config.compliance.auditLogRetentionDays > 0 &&
+    config.compliance.auditLogRetentionDays < 30
+  ) {
+    warnings.push({
+      field: 'compliance.auditLogRetentionDays',
+      message: `compliance.auditLogRetentionDays is ${config.compliance.auditLogRetentionDays} — most compliance frameworks (SOC 2, ISO 27001, GDPR) require at least 90 days of audit retention.`,
+    });
+  }
+
+  // Q4: security posture URLs must not be vendor domains
+  for (const field of ['securityPostureUrl', 'soc2ReportUrl', 'penTestReportUrl']) {
+    const url = config.compliance?.[field];
+    if (url && isComplianceVendorUrl(url)) {
+      errors.push({
+        field: `compliance.${field}`,
+        message: `compliance.${field} '${url}' exposes a vendor-platform domain. Security evidence URLs must be served through the partner's own trust portal or a gated partner-branded URL.`,
+      });
+    }
+  }
+
+  // Q4: certificationNotes must not contain vendor terms
+  if (config.compliance?.certificationNotes) {
+    const lower = String(config.compliance.certificationNotes).toLowerCase();
+    const term = COMPLIANCE_VENDOR_TERMS.find((t) => lower.includes(t));
+    if (term) {
+      errors.push({
+        field: 'compliance.certificationNotes',
+        message: `compliance.certificationNotes contains vendor term '${term}'. Partner-facing security posture notes must use generic infrastructure language, not vendor names.`,
+      });
+    }
+  }
+
+  // Q4: evidence access enum checks
+  for (const field of ['soc2Access', 'penTestAccess', 'iso27001Access']) {
+    const val = config.compliance?.[field];
+    if (val && !VALID_SECURITY_EVIDENCE_ACCESS_LEVELS.includes(val)) {
+      errors.push({
+        field: `compliance.${field}`,
+        message: `compliance.${field} '${val}' is not a known value. Allowed: ${VALID_SECURITY_EVIDENCE_ACCESS_LEVELS.join(', ')}.`,
+      });
+    }
   }
 
   const brandingPolicy = enforceBrandingSecurityPolicy(config.branding || {}, { mode: 'config' });

@@ -63,6 +63,12 @@ import {
   SLA_TIER,
   SUPPORT_SYSTEM,
 } from './partner-ops.mjs';
+import {
+  AUDIT_LOG_FORMAT,
+  DPA_STATUS,
+  RESIDENCY_ENFORCEMENT,
+  SECURITY_EVIDENCE_ACCESS,
+} from './compliance.mjs';
 
 // ─── Schema Version ──────────────────────────────────────────────────────────
 
@@ -588,27 +594,42 @@ export const customerConfigDefaults = Object.freeze({
   // export config, and security posture evidence links. Partners present
   // their own DPA to end clients — vendor references must not appear.
   compliance: {
-    // Data residency
+    // ── Q1 — Data Residency ─────────────────────────────────────────────
     dataResidencyRegion: DATA_RESIDENCY_REGION.GLOBAL, // elected storage/processing region
-    dataResidencyEnforced: false,  // whether infra has confirmed enforcement
-    dataResidencyNotes: '',        // operator notes for contractual confirmations
-    // DPA & legal
+    dataResidencyEnforced: false,               // whether infra has confirmed enforcement
+    dataResidencyEnforcementLevel: RESIDENCY_ENFORCEMENT.UNCONFIRMED, // confirmation tier
+    dataResidencyContractualConfirmation: false, // covered in upstream DPA / service agreement
+    dataResidencyNotes: '',                     // operator notes / contract clause ref
+    dataResidencyCertifiedAt: '',               // ISO timestamp of last certification
+    // ── Q2 — DPA Management ─────────────────────────────────────────────
     dpaUrl: '',                    // partner-branded DPA URL presented to end clients
     dpaVersion: '',                // e.g. '2026-01'
     dpaAcceptedAt: '',             // ISO timestamp when partner last accepted upstream DPA
+    dpaReviewPeriodDays: 365,      // how often partner must re-confirm DPA acceptance
     privacyPolicyUrl: '',          // override for partner's end-client privacy policy URL
-    // Audit log export
-    auditLogRetentionDays: 90,     // how long config/admin audit entries are retained
-    auditLogExportEnabled: false,  // whether /api/compliance/audit-export is active
-    auditLogSiemFormat: 'jsonl',   // 'jsonl' | 'cef' — CEF = ArcSight/Splunk compatible
-    auditLogWebhookUrl: '',        // push audit events to partner SIEM endpoint
-    // Security posture evidence (shared under NDA for partner sales)
-    securityPostureUrl: '',        // partner-branded security overview / trust page URL
-    penTestReportUrl: '',          // URL to latest pen test summary (gated, NDA-protected)
-    soc2ReportUrl: '',             // SOC 2 Type II report URL for partner access
-    certificationNotes: '',        // ISO 27001 cert status, scope notes, NDA conditions
-    // Incident comms
-    incidentNotificationEmail: '', // who receives DPA breach / compliance incident notices
+    ndaContactEmail: '',           // contact address for NDA / evidence requests
+    // ── Q3 — Audit Log Export ────────────────────────────────────────────
+    auditLogRetentionDays: 90,               // how long config/admin audit entries are retained
+    auditLogExportEnabled: false,            // whether /api/compliance/audit-export is active
+    auditLogExportEndpointEnabled: false,    // alias for Worker route gating
+    auditLogSiemFormat: AUDIT_LOG_FORMAT.JSONL, // 'jsonl' | 'cef'
+    auditLogWebhookUrl: '',                  // push audit events to partner SIEM endpoint
+    auditLogExportS3Bucket: '',              // S3-compatible bucket name for bulk export
+    auditLogExportBlobContainer: '',        // Azure Blob / R2 container for bulk export
+    // ── Q4 — Security Posture Evidence ──────────────────────────────────
+    securityPostureUrl: '',         // partner-branded security overview / trust page URL
+    penTestReportUrl: '',           // URL to latest pen test summary (gated, NDA-protected)
+    penTestAccess: SECURITY_EVIDENCE_ACCESS.NONE, // NDA/public access level for pen test
+    penTestFrequency: 'annual',     // how often pen tests are conducted
+    soc2ReportUrl: '',              // SOC 2 Type II report URL for partner access
+    soc2Access: SECURITY_EVIDENCE_ACCESS.NONE,    // NDA/public access level for SOC 2
+    soc2Scope: '',                  // SOC 2 scope description (system boundary)
+    iso27001Certified: false,       // whether ISO 27001 certification covers this use case
+    iso27001Scope: '',              // certification scope notes
+    iso27001Access: SECURITY_EVIDENCE_ACCESS.NONE, // how partners can access cert evidence
+    certificationNotes: '',         // operator notes on certifications, NDA conditions
+    // ── General ──────────────────────────────────────────────────────────
+    incidentNotificationEmail: '',  // who receives DPA breach / compliance incident notices
     notes: '',
   },
 

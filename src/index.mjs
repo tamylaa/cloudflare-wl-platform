@@ -73,3 +73,20 @@ export {
   resolveSlaPolicyDescriptor,
   resolveSandboxEnvironmentDescriptor,
 } from './config/partner-ops.mjs'
+export {
+  AUDIT_LOG_FORMAT,
+  AUDIT_LOG_FORMAT_VALUES,
+  DPA_STATUS,
+  DPA_STATUS_VALUES,
+  RESIDENCY_ENFORCEMENT,
+  RESIDENCY_ENFORCEMENT_VALUES,
+  SECURITY_EVIDENCE_ACCESS,
+  SECURITY_EVIDENCE_ACCESS_VALUES,
+  assertComplianceWhiteLabel,
+  buildDataResidencyCertificate,
+  buildSecurityPostureDescriptor,
+  formatAuditLogEntry,
+  resolveAuditLogPolicy,
+  resolveDataResidencyPolicy,
+  resolveDpaStatus,
+} from './config/compliance.mjs'
