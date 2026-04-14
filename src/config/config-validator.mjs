@@ -442,6 +442,37 @@ export function validateConfig(config) {
     });
   }
 
+  // billingSupportLabel must not expose a known sub-processor brand (Stripe, Chargebee, etc.)
+  if (config.billingReseller?.billingSupportLabel) {
+    const bsl = String(config.billingReseller.billingSupportLabel).toLowerCase();
+    const processorNames = ['stripe', 'chargebee', 'recurly', 'paddle', 'braintree', 'adyen', 'paypal', 'zuora'];
+    const leakedProcessor = processorNames.find((name) => bsl.includes(name));
+    if (leakedProcessor) {
+      warnings.push({
+        field: 'billingReseller.billingSupportLabel',
+        message: `billingSupportLabel contains '${leakedProcessor}' which exposes the underlying payment processor brand. Use your partner product name instead.`,
+      });
+    }
+  }
+
+  // usageReportingEnabled without a configured pricing basis cannot produce accurate invoices
+  if (config.billingReseller?.usageReportingEnabled) {
+    const up = config.billingReseller?.usagePricing || {};
+    const hasAnyPricing = Number(up.baseMonthlyCents) > 0 || Number(up.aiCallCents) > 0 || Number(up.ai1kTokenCents) > 0;
+    if (!hasAnyPricing) {
+      warnings.push({
+        field: 'billingReseller.usagePricing',
+        message: 'Usage reporting is enabled but no wholesale pricing basis is configured (baseMonthlyCents, aiCallCents, or ai1kTokenCents). Downstream invoices cannot be computed without at least one non-zero price.',
+      });
+    }
+    if (!config.billingReseller?.downstreamInvoiceFormat || config.billingReseller.downstreamInvoiceFormat === 'none') {
+      warnings.push({
+        field: 'billingReseller.downstreamInvoiceFormat',
+        message: 'Usage reporting is enabled but downstreamInvoiceFormat is unset. Set to csv, json, or pdf so partner export pipelines can select the right serializer.',
+      });
+    }
+  }
+
   if (config.authIdentity?.ssoMode === 'oidc') {
     if (!config.authIdentity?.oidcDiscoveryUrl) {
       warnings.push({
