@@ -50,6 +50,12 @@ import {
   INTEGRATION_VISIBILITY_VALUES,
   WEBHOOK_RETRY_STRATEGY_VALUES,
 } from './api-integration.mjs';
+import {
+  PARTNER_DOCS_MODE_VALUES,
+  PARTNER_ENV_VALUES,
+  SLA_TIER_VALUES,
+  SUPPORT_SYSTEM_VALUES,
+} from './partner-ops.mjs';
 
 // ─── Field-Level Validators ─────────────────────────────────────────────────
 
@@ -76,6 +82,10 @@ const VALID_API_DOCS_MODES = API_DOCS_MODE_VALUES;
 const VALID_EMBED_MODES = EMBED_MODE_VALUES;
 const VALID_INTEGRATION_VISIBILITY = INTEGRATION_VISIBILITY_VALUES;
 const VALID_WEBHOOK_RETRY_STRATEGIES = WEBHOOK_RETRY_STRATEGY_VALUES;
+const VALID_PARTNER_ENVS = PARTNER_ENV_VALUES;
+const VALID_SLA_TIERS = SLA_TIER_VALUES;
+const VALID_SUPPORT_SYSTEMS = SUPPORT_SYSTEM_VALUES;
+const VALID_PARTNER_DOCS_MODES = PARTNER_DOCS_MODE_VALUES;
 const VALID_AUTH_SSO_MODES = AUTH_SSO_MODE_VALUES;
 const VALID_MFA_ENFORCEMENT_MODES = MFA_ENFORCEMENT_MODE_VALUES;
 const VALID_SESSION_COOKIE_SAME_SITE = AUTH_SESSION_SAME_SITE_VALUES;
@@ -749,6 +759,99 @@ export function validateConfig(config) {
     });
   }
 
+  // ── Partner Ops & Support checks ──────────────────────────────
+  const PARTNER_VENDOR_URL_PATTERNS = [
+    /\.workers\.dev/, /\.pages\.dev/, /cloudflare\.com/, /clodo\.io/,
+    /readme\.io/, /statuspage\.io/, /atlassian\.com/,
+    /zendesk\.com/, /helpscout\.net/, /freshdesk\.com/, /intercom\.io/, /crisp\.chat/,
+  ];
+  function isPartnerVendorUrl(url) {
+    if (!url) return false;
+    const lower = String(url).toLowerCase();
+    return PARTNER_VENDOR_URL_PATTERNS.some((re) => re.test(lower));
+  }
+
+  // Q1: adminPortalUrl must not be a vendor-platform domain
+  if (config.partnerOps?.adminPortalUrl && isPartnerVendorUrl(config.partnerOps.adminPortalUrl)) {
+    errors.push({
+      field: 'partnerOps.adminPortalUrl',
+      message: `partnerOps.adminPortalUrl '${config.partnerOps.adminPortalUrl}' exposes a vendor-platform domain. The partner admin portal must be served under the partner's own domain.`,
+    });
+  }
+
+  // Q2: Support surface URLs must all be partner-owned
+  const supportUrlFields = [
+    ['partnerOps.helpCenterUrl',   config.partnerOps?.helpCenterUrl],
+    ['partnerOps.ticketSystemUrl', config.partnerOps?.ticketSystemUrl],
+    ['partnerOps.statusPageUrl',   config.partnerOps?.statusPageUrl],
+  ];
+  for (const [field, url] of supportUrlFields) {
+    if (url && isPartnerVendorUrl(url)) {
+      errors.push({
+        field,
+        message: `'${url}' exposes a vendor-platform or vendor-support domain. All end-client support surfaces must be under the partner's own domain.`,
+      });
+    }
+  }
+
+  // Q2: supportBrand must not contain vendor terms
+  const PARTNER_OPS_VENDOR_TERMS = ['cloudflare', 'clodo', 'anthropic', 'zendesk', 'workers'];
+  const supportBrand = config.partnerOps?.supportBrand;
+  if (supportBrand) {
+    const lower = String(supportBrand).toLowerCase();
+    const term = PARTNER_OPS_VENDOR_TERMS.find((t) => lower.includes(t));
+    if (term) {
+      errors.push({
+        field: 'partnerOps.supportBrand',
+        message: `partnerOps.supportBrand '${supportBrand}' contains vendor brand term '${term}'. The support team name shown to end clients must use the partner's brand, not the platform vendor.`,
+      });
+    }
+  }
+
+  // Q3: sandboxUrl must not be a vendor-platform domain
+  if (config.partnerOps?.sandboxUrl && isPartnerVendorUrl(config.partnerOps.sandboxUrl)) {
+    errors.push({
+      field: 'partnerOps.sandboxUrl',
+      message: `partnerOps.sandboxUrl '${config.partnerOps.sandboxUrl}' exposes a vendor-platform domain. Sandbox environments must be under a partner-owned subdomain (e.g. sandbox.partnerbrand.com).`,
+    });
+  }
+
+  // Q3: sandboxDataIsolated must not be explicitly disabled
+  if (config.partnerOps?.sandboxEnabled && config.partnerOps?.sandboxDataIsolated === false) {
+    errors.push({
+      field: 'partnerOps.sandboxDataIsolated',
+      message: 'partnerOps.sandboxDataIsolated is false but sandboxEnabled is true. Sandbox environments MUST use an isolated KV namespace and database — sharing data with production is a data-safety violation.',
+    });
+  }
+
+  // Q4: incidentPageUrl must not be a vendor-platform or third-party status-page domain
+  if (config.partnerOps?.incidentPageUrl && isPartnerVendorUrl(config.partnerOps.incidentPageUrl)) {
+    errors.push({
+      field: 'partnerOps.incidentPageUrl',
+      message: `partnerOps.incidentPageUrl '${config.partnerOps.incidentPageUrl}' exposes a vendor or third-party status-page domain. Incident pages must be served under the partner's brand so end clients never see vendor infrastructure.`,
+    });
+  }
+
+  // Q4: warn when SLA tier is set but no incident page configured
+  if (
+    config.partnerOps?.slaTier &&
+    config.partnerOps.slaTier !== 'none' &&
+    !config.partnerOps?.incidentPageUrl
+  ) {
+    warnings.push({
+      field: 'partnerOps.incidentPageUrl',
+      message: `partnerOps.slaTier is '${config.partnerOps.slaTier}' but incidentPageUrl is not set. Partners committing to an SLA must provide a partner-branded status/incident page for end clients.`,
+    });
+  }
+
+  // Q5: partnerDocsUrl must not be a vendor-platform domain
+  if (config.partnerOps?.partnerDocsUrl && isPartnerVendorUrl(config.partnerOps.partnerDocsUrl)) {
+    errors.push({
+      field: 'partnerOps.partnerDocsUrl',
+      message: `partnerOps.partnerDocsUrl '${config.partnerOps.partnerDocsUrl}' exposes a vendor-platform domain. Partner documentation must be published on a partner-owned domain.`,
+    });
+  }
+
   const brandingPolicy = enforceBrandingSecurityPolicy(config.branding || {}, { mode: 'config' });
   for (const finding of [...brandingPolicy.errors, ...brandingPolicy.warnings]) {
     const fieldPath = finding.field ? `branding.${finding.field}` : 'branding';
@@ -987,6 +1090,26 @@ export function validateConfig(config) {
       field: 'apiIntegration.embedMode',
       value: config.apiIntegration?.embedMode,
       allowed: VALID_EMBED_MODES,
+    },
+    {
+      field: 'partnerOps.environment',
+      value: config.partnerOps?.environment,
+      allowed: VALID_PARTNER_ENVS,
+    },
+    {
+      field: 'partnerOps.slaTier',
+      value: config.partnerOps?.slaTier,
+      allowed: VALID_SLA_TIERS,
+    },
+    {
+      field: 'partnerOps.ticketSystem',
+      value: config.partnerOps?.ticketSystem,
+      allowed: VALID_SUPPORT_SYSTEMS,
+    },
+    {
+      field: 'partnerOps.partnerDocsMode',
+      value: config.partnerOps?.partnerDocsMode,
+      allowed: VALID_PARTNER_DOCS_MODES,
     },
   ];
 

@@ -57,6 +57,12 @@ import {
   INTEGRATION_VISIBILITY,
   WEBHOOK_RETRY_STRATEGY,
 } from './api-integration.mjs';
+import {
+  PARTNER_DOCS_MODE,
+  PARTNER_ENV,
+  SLA_TIER,
+  SUPPORT_SYSTEM,
+} from './partner-ops.mjs';
 
 // ─── Schema Version ──────────────────────────────────────────────────────────
 
@@ -518,7 +524,54 @@ export const customerConfigDefaults = Object.freeze({
 
     notes: '',
   },
-  // ── Operations & SLA ──────────────────────────────────────────────
+  // ── Partner Ops & Support ──────────────────────────────────────
+  // Q1 — partner admin portal (dedicated reseller management hub)
+  // Q2 — white-label support experience (help centre, tickets, status page)
+  // Q3 — sandbox / staging environment per partner
+  // Q4 — SLA-backed uptime + vendor-neutral incident reporting
+  // Q5 — white-label partner documentation identity
+  partnerOps: {
+    // Q1: Partner admin portal
+    adminPortalEnabled: false,         // Whether this partner has an admin portal
+    adminPortalUrl: '',                // e.g. 'https://admin.partnerbrand.com'
+    adminPortalProductName: '',        // e.g. 'Acme Partner Hub'
+
+    // Q2: White-label support surfaces
+    helpCenterUrl: '',                 // e.g. 'https://help.partnerbrand.com'
+    ticketSystemUrl: '',               // e.g. 'https://support.partnerbrand.com'
+    statusPageUrl: '',                 // e.g. 'https://status.partnerbrand.com'
+    supportEmail: '',                  // e.g. 'support@partnerbrand.com'
+    supportBrand: '',                  // e.g. 'Acme Support Team'
+    ticketSystem: SUPPORT_SYSTEM.DISABLED, // 'disabled' | 'email_only' | 'custom_portal' | 'external'
+
+    // Q3: Sandbox / staging environment
+    environment: PARTNER_ENV.PRODUCTION,   // 'production' | 'sandbox' | 'staging' | 'preview'
+    sandboxEnabled: false,                 // Whether a sandbox environment is provisioned
+    sandboxUrl: '',                        // e.g. 'https://sandbox.partnerbrand.com'
+    sandboxDataIsolated: true,             // MUST be true — sandbox uses separate KV/D1
+    featureFlagsEnabled: false,            // Whether feature-flag overrides are active
+
+    // Q4: SLA & incident reporting
+    slaTier: SLA_TIER.NONE,                // 'none'|'standard'|'business'|'enterprise'|'mission_critical'
+    slaUptimePct: 0,                      // e.g. 99.9 (0 = no commitment)
+    slaResponseTimeMs: 0,                 // e.g. 5000 (0 = no commitment)
+    maintenanceWindowCron: '',             // e.g. '0 3 * * 0' (Sunday 03:00 UTC)
+    incidentPageUrl: '',                  // e.g. 'https://status.partnerbrand.com'
+    alertEmail: '',                        // ops alert email for SLA breach notifications
+
+    // Q5: Partner documentation
+    partnerDocsMode: PARTNER_DOCS_MODE.DISABLED, // 'disabled'|'branded'|'unbranded'|'private'
+    partnerDocsUrl: '',                    // e.g. 'https://docs.partnerbrand.com'
+    partnerDocsProductName: '',            // product name used in all docs pages
+    docsHasOnboarding: true,               // whether onboarding section exists
+    docsHasBrandingSetup: true,            // whether branding-setup section exists
+    docsHasTenantManagement: true,         // whether tenant-management section exists
+    docsHasApiIntegration: true,           // whether API integration section exists
+
+    notes: '',
+  },
+
+  // ── Operations & SLA (legacy — prefer partnerOps above) ──────────────
   // Per-tenant SLA commitments, environment classification, and
   // partner-visible incident reporting config. Never reference vendor
   // infrastructure in statusPageUrl / incidentReportingUrl.

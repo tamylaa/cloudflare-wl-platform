@@ -55,3 +55,21 @@ export {
   resolveWebhookDeliveryTargets,
   resolveWebhookEventSchema,
 } from './config/api-integration.mjs'
+export {
+  PARTNER_ENV,
+  PARTNER_ENV_VALUES,
+  PARTNER_DOCS_MODE,
+  PARTNER_DOCS_MODE_VALUES,
+  SLA_TIER,
+  SLA_TIER_VALUES,
+  SUPPORT_SYSTEM,
+  SUPPORT_SYSTEM_VALUES,
+  assertNotSandboxConfig,
+  assertPartnerOpsWhiteLabel,
+  buildAdminPortalDescriptor,
+  buildIncidentReportDescriptor,
+  buildPartnerDocsDescriptor,
+  buildSupportExperienceDescriptor,
+  resolveSlaPolicyDescriptor,
+  resolveSandboxEnvironmentDescriptor,
+} from './config/partner-ops.mjs'
